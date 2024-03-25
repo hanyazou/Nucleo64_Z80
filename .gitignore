@@ -27,3 +27,6 @@ fp-info-cache
 # Exported BOM files
 *.xml
 *.csv
+
+# macOS 'Desktop Services Store' automatically created 
+.DS_Store
