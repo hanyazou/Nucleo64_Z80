@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -104,8 +105,7 @@ int main(void)
     pin_state = !pin_state;
     HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, pin_state);
 
-    uint8_t Test[] = "Hello World !!!\r\n"; //Data to send
-    HAL_UART_Transmit(&huart2,Test,sizeof(Test),10);// Sending in normal mode
+    printf("Hello, World !!!\r\n");
     HAL_Delay(1000);
   }
   /* USER CODE END 3 */
@@ -259,6 +259,26 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+  * @brief  Retargets the C library printf function to the USART.
+  * @param  None
+  * @retval None
+  */
+#ifdef __GNUC__
+/* With GCC/RAISONANCE, small printf (option LD Linker->Libraries->Small printf
+   set to 'Yes') calls __io_putchar() */
+int __io_putchar(int ch)
+#else
+int fputc(int ch, FILE *f)
+#endif /* __GNUC__ */
+{
+  /* Place your implementation of fputc here */
+  /* e.g. write a character to the USART1 and Loop until the end of transmission */
+  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
+
+  return ch;
+}
 
 /* USER CODE END 4 */
 
