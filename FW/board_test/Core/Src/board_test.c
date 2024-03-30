@@ -89,11 +89,28 @@ void run_clock(int n)
 void board_test(void)
 {
     uint8_t prog[] = {
-        0xf3,        // DI
-        0x3e, 0xa5,  // LD A, A5h
-        0xd3, 0x5a,  // OUT (5Ah), A
-        0x76,        // HALT
-        0x00,        // NOP
+        0xf3,              // DI
+        0x3e, 0x0d,        // LD A, \r
+        0xd3, 0x5a,        // OUT (5Ah), A
+        0x3e, 0x0a,        // LD A, \n
+        0xd3, 0x5a,        // OUT (5Ah), A
+        0x3e, 0x48,        // LD A, 'H'
+        0xd3, 0x5a,        // OUT (5Ah), A
+        0x3e, 0x45,        // LD A, 'E'
+        0xd3, 0x5a,        // OUT (5Ah), A
+        0x3e, 0x4c,        // LD A, 'L'
+        0xd3, 0x5a,        // OUT (5Ah), A
+        0x3e, 0x4c,        // LD A, 'L'
+        0xd3, 0x5a,        // OUT (5Ah), A
+        0x3e, 0x4f,        // LD A, 'O'
+        0xd3, 0x5a,        // OUT (5Ah), A
+        0x3e, 0x0d,        // LD A, \r
+        0xd3, 0x5a,        // OUT (5Ah), A
+        0x3e, 0x0a,        // LD A, \n
+        0xd3, 0x5a,        // OUT (5Ah), A
+
+        0x76,              // HALT
+        0x00,              // NOP
     };
     uint8_t buf[sizeof(prog)];
     uint16_t addr;
@@ -111,19 +128,7 @@ void board_test(void)
     set_pin(BANK_SEL1, 1);  // for TC551001 CE2 pin
     set_pin(BANK_SEL2, 0);  // A18
 
-#if 0
-    set_ioreq_pin(1);
-    set_memrq_pin(0);
-    set_rd_pin(1);
-    set_wr_pin(1);
-
-    set_data_pins(0);
-    set_addr_pins(0);
-    set_data_dir(0);  // output
-    set_addr_dir(0);  // output
-#else
     bus_master(1);
-#endif
 
     addr = 0;
     set_memrq_pin(0);
@@ -161,14 +166,6 @@ void board_test(void)
     if ((addr % 16) != 0)
         printf("\r\n");
 
-#if 0
-    set_pin_dir(SPI1_SS, 0);  // output
-    for (int i = 0; i < 8; i++) {
-        set_pin(SPI1_SS, !get_pin(SPI1_SS));
-        HAL_Delay(200);
-    }
-#endif
-
     set_busrq_pin(1);
     set_wait_pin_dir(1);  // release wait pin
     bus_master(0);
@@ -182,35 +179,48 @@ void board_test(void)
     /*
      * run Z80
      */
-    for (int i = 0; i < 256; i++) {
-        run_clock(1);
-        if (get_pin(WAIT) == 0)
-            break;
-    }
-
-    /*
-     * handle I/O request
-     */
-    if (get_pin(IORQ) == 0) {
-        data = data_pins();
-        addr = addr_pins();
-        if (get_pin(WR) == 0) {
-            printf("%s:  write %02X, %02X\r\n", __func__, addr & 0xff, data);
-        } else {
-            printf("%s:   read %02X\r\n", __func__, addr & 0xff);
+    while (1) {
+        int i;
+        for (i = 0; i < 256; i++) {
+            run_clock(1);
+            if (get_pin(WAIT) == 0)
+                break;
         }
-    } else {
-        printf("%s: IOREQ is not active\r\n", __func__);
-    }
+        if (256 <= i) {
+            break;
+        }
 
-    set_busrq_pin(0);
-    set_wait_pin(1);
-    set_wait_pin_dir(0);
-    run_clock(8);
-    set_wait_pin_dir(1);
-    run_clock(8);
-    set_busrq_pin(1);
-    run_clock(256);
+        /*
+         * handle I/O request
+         */
+        if (get_pin(IORQ) == 0) {
+            data = data_pins();
+            addr = addr_pins();
+            if (get_pin(WR) == 0) {
+#if 0
+                printf("%s: write %02X, %02X %c\r\n", __func__, addr & 0xff, data,
+                       (0x30 <= data && data <= 0x7f) ? data : ' ');
+#else
+                printf("%c", data);
+#endif
+            } else {
+                printf("%s:  read %02X\r\n", __func__, addr & 0xff);
+            }
+        } else {
+            printf("%s: IOREQ is not active\r\n", __func__);
+        }
+
+        set_busrq_pin(0);
+        set_wait_pin(1);
+        set_wait_pin_dir(0);
+        run_clock(8);
+        set_wait_pin_dir(1);
+        run_clock(8);
+        set_busrq_pin(1);
+        while (get_pin(IORQ) == 0) {
+            run_clock(1);
+        }
+    }
 
     /*
      * stop Z80
