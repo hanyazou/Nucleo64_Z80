@@ -76,6 +76,11 @@ static void bus_master(int enable)
     }
 }
 
+#define UART_DREG 0x00		//Data REG
+#define UART_CREG 0x01		//Control REG
+extern size_t rom_size;
+extern const unsigned char rom[];
+
 void run_clock(int n)
 {
 #if defined(CLK_GPIO_Port) && defined(CLK_Pin)
@@ -92,33 +97,9 @@ void run_clock(int n)
 
 void board_test(void)
 {
-    uint8_t prog[] = {
-        0xf3,              // DI
-        0x3e, 0x0d,        // LD A, \r
-        0xd3, 0x5a,        // OUT (5Ah), A
-        0x3e, 0x0a,        // LD A, \n
-        0xd3, 0x5a,        // OUT (5Ah), A
-        0x3e, 0x48,        // LD A, 'H'
-        0xd3, 0x5a,        // OUT (5Ah), A
-        0x3e, 0x45,        // LD A, 'E'
-        0xd3, 0x5a,        // OUT (5Ah), A
-        0x3e, 0x4c,        // LD A, 'L'
-        0xd3, 0x5a,        // OUT (5Ah), A
-        0x3e, 0x4c,        // LD A, 'L'
-        0xd3, 0x5a,        // OUT (5Ah), A
-        0x3e, 0x4f,        // LD A, 'O'
-        0xd3, 0x5a,        // OUT (5Ah), A
-        0x3e, 0x0d,        // LD A, \r
-        0xd3, 0x5a,        // OUT (5Ah), A
-        0x3e, 0x0a,        // LD A, \n
-        0xd3, 0x5a,        // OUT (5Ah), A
-
-        0x76,              // HALT
-        0x00,              // NOP
-    };
-    uint8_t buf[sizeof(prog)];
     uint16_t addr;
     uint8_t data;
+    int io_write;
 
 
     /*
@@ -138,8 +119,8 @@ void board_test(void)
     set_memrq_pin(0);
     set_data_dir(0);  // output
     set_addr_pins(addr);
-    while (addr < sizeof(prog)) {
-        set_data_pins(prog[addr]);
+    while (addr < rom_size) {
+        set_data_pins(rom[addr]);
         set_wr_pin(0);  // write enable
         HAL_Delay(1);
         set_wr_pin(1);  // clear write enable
@@ -147,6 +128,10 @@ void board_test(void)
         HAL_Delay(1);
     }
 
+#if 0
+    /*
+     * verify RAM data
+     */
     addr = 0;
     set_data_dir(1);  // input
     set_addr_pins(addr);
@@ -169,6 +154,7 @@ void board_test(void)
     }
     if ((addr % 16) != 0)
         printf("\r\n");
+#endif
 
     set_busrq_pin(1);
     set_wait_pin_dir(1);  // release wait pin
@@ -197,21 +183,17 @@ void board_test(void)
         /*
          * handle I/O request
          */
-        if (get_pin(IORQ) == 0) {
-            data = data_pins();
-            addr = addr_pins();
-            if (get_pin(WR) == 0) {
-#if 0
-                printf("%s: write %02X, %02X %c\r\n", __func__, addr & 0xff, data,
-                       (0x30 <= data && data <= 0x7f) ? data : ' ');
-#else
-                printf("%c", data);
-#endif
-            } else {
-                printf("%s:  read %02X\r\n", __func__, addr & 0xff);
-            }
-        } else {
+        if (get_pin(IORQ) == 1) {
             printf("%s: IOREQ is not active\r\n", __func__);
+            while (1);
+        }
+
+        data = data_pins();
+        addr = addr_pins();
+        io_write = (get_pin(WR) == 0);
+        if (!io_write) {
+            set_data_pins(0xff);
+            set_data_dir(0);  // output
         }
 
         set_busrq_pin(0);
@@ -221,6 +203,23 @@ void board_test(void)
         set_wait_pin_dir(1);
         while (get_pin(IORQ) == 0) {
             run_clock(1);
+        }
+        if (io_write) {
+            switch (addr & 0xff) {
+            case UART_DREG:
+#if 1
+                printf("%s: write %02X, %02X %c\r\n", __func__, addr & 0xff, data,
+                       (0x30 <= data && data <= 0x7f) ? data : ' ');
+#else
+                printf("%c", data);
+#endif
+                break;
+            default:
+                break;
+            }
+        } else {
+            //printf("%s:  read %02X\r\n", __func__, addr & 0xff);
+            set_data_dir(1);  // input
         }
         set_busrq_pin(1);
     }
@@ -236,3 +235,28 @@ void board_test(void)
     while (1)
         HAL_Delay(10000);
 }
+
+const unsigned char rom[] = {
+    0xf3,              // DI
+    0x3e, 0x0d,        // LD A, \r
+    0xd3, 0x00,        // OUT (00h), A
+    0x3e, 0x0a,        // LD A, \n
+    0xd3, 0x00,        // OUT (00h), A
+    0x3e, 0x48,        // LD A, 'H'
+    0xd3, 0x00,        // OUT (00h), A
+    0x3e, 0x45,        // LD A, 'E'
+    0xd3, 0x00,        // OUT (00h), A
+    0x3e, 0x4c,        // LD A, 'L'
+    0xd3, 0x00,        // OUT (00h), A
+    0x3e, 0x4c,        // LD A, 'L'
+    0xd3, 0x00,        // OUT (00h), A
+    0x3e, 0x4f,        // LD A, 'O'
+    0xd3, 0x00,        // OUT (00h), A
+    0x3e, 0x0d,        // LD A, \r
+    0xd3, 0x00,        // OUT (00h), A
+    0x3e, 0x0a,        // LD A, \n
+    0xd3, 0x00,        // OUT (00h), A
+    0x76,              // HALT
+    0x00,              // NOP
+};
+size_t rom_size = sizeof(rom);
