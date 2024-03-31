@@ -78,12 +78,16 @@ static void bus_master(int enable)
 
 void run_clock(int n)
 {
+#if defined(CLK_GPIO_Port) && defined(CLK_Pin)
     for (int i = 0; i < n; i++) {
         set_pin(CLK, !get_pin(CLK));
         HAL_Delay(1);
         set_pin(CLK, !get_pin(CLK));
         HAL_Delay(1);
     }
+#else
+    HAL_Delay(1);  // XXX
+#endif
 }
 
 void board_test(void)
@@ -182,9 +186,9 @@ void board_test(void)
     while (1) {
         int i;
         for (i = 0; i < 256; i++) {
-            run_clock(1);
             if (get_pin(WAIT) == 0)
                 break;
+            run_clock(1);
         }
         if (256 <= i) {
             break;
@@ -215,11 +219,10 @@ void board_test(void)
         set_wait_pin_dir(0);
         run_clock(8);
         set_wait_pin_dir(1);
-        run_clock(8);
-        set_busrq_pin(1);
         while (get_pin(IORQ) == 0) {
             run_clock(1);
         }
+        set_busrq_pin(1);
     }
 
     /*
