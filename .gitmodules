@@ -1,0 +1,3 @@
+[submodule "tools/zasm"]
+	path = tools/zasm
+	url = https://github.com/Megatokio/zasm
