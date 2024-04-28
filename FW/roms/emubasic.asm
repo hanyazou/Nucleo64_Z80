@@ -1315,7 +1315,7 @@ STALL:	RST	10H		; Wait for key
 	JR	Z,STOP		; Break during hold exits prog
 	JR	STALL		; Loop until <Ctrl-Q> or <brk>
 ;
-BRK	LD	A,0FFH		; Set BRKFLG
+BRK:    LD	A,0FFH		; Set BRKFLG
 	LD	(BRKFLG),A	; Store it
 ;
 
@@ -4224,12 +4224,12 @@ HEX4:	LD	(HL),C		; to PBUFF+3
 	LD	HL,PBUFF	; Reset to start of PBUFF
 	JP	STR1		; Convert the PBUFF to a string and return it
 ;
-BYT2ASC	LD	B,A		; Save original value
+BYT2ASC:LD	B,A		; Save original value
 	AND	0FH		; Strip off upper nybble
 	CP	0AH		; 0-9?
 	JR	C,ADD30		; If A-F, add 7 more
 	ADD	A,07H		; Bring value up to ASCII A-F
-ADD30	ADD	A,30H		; And make ASCII
+ADD30:  ADD	A,30H		; And make ASCII
 	LD	C,A		; Save converted char to C
 	LD	A,B		; Retrieve original value
 	RRCA			; and Rotate it right
@@ -4240,21 +4240,21 @@ ADD30	ADD	A,30H		; And make ASCII
 	CP	0AH		; 0-9? < A hex?
 	JR	C,ADD301	; Skip Add 7
 	ADD	A,07H		; Bring it up to ASCII A-F
-ADD301	ADD	A,30H		; And make it full ASCII
+ADD301: ADD	A,30H		; And make it full ASCII
 	LD	B,A		; Store high order byte
 	RET	
 ;
 ; Convert "&Hnnnn" to FPREG
 ; Gets a character from (HL) checks for Hexadecimal ASCII numbers "&Hnnnn"
 ; Char is in A, NC if char is;<=>?@ A-z, CY is set if 0-9
-HEXTFP	EX	DE,HL		; Move code string pointer to DE
+HEXTFP: EX	DE,HL		; Move code string pointer to DE
 	LD	HL,0000H	; Zero out the value
 	CALL	GETHEX		; Check the number for valid hex
 	JP	C,HXERR		; First value wasn't hex, HX error
 	JR	HEXLP1		; Convert first character
-HEXLP	CALL	GETHEX		; Get second and addtional characters
+HEXLP:  CALL	GETHEX		; Get second and addtional characters
 	JR	C,HEXIT		; Exit if not a hex character
-HEXLP1	ADD	HL,HL		; Rotate 4 bits to the left
+HEXLP1: ADD	HL,HL		; Rotate 4 bits to the left
 	ADD	HL,HL
 	ADD	HL,HL
 	ADD	HL,HL
@@ -4262,7 +4262,7 @@ HEXLP1	ADD	HL,HL		; Rotate 4 bits to the left
 	LD	L,A		; Save new value
 	JR	HEXLP		; And continue until all hex characters are in
 ;
-GETHEX	INC	DE		; Next location
+GETHEX: INC	DE		; Next location
 	LD	A,(DE)		; Load character at pointer
 	CP	' '
 	JP	Z,GETHEX	; Skip spaces
@@ -4273,11 +4273,11 @@ GETHEX	INC	DE		; Next location
 	SUB	07H		; Reduce to A-F
 	CP	0AH		; Value should be $0A-$0F at this point
 	RET	C		; CY set if was :		; < = > ? @
-NOSUB7	CP	10H		; > Greater than "F"?
+NOSUB7: CP	10H		; > Greater than "F"?
 	CCF
 	RET			; CY set if it wasn't valid hex
 	
-HEXIT	EX	DE,HL		; Value into DE, Code string into HL
+HEXIT:  EX	DE,HL		; Value into DE, Code string into HL
 	LD	A,D		; Load DE into AC
 	LD	C,E		; For prep to 
 	PUSH	HL
