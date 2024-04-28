@@ -81,33 +81,18 @@ static void bus_master(int enable)
 extern size_t rom_size;
 extern const unsigned char rom[];
 
-void run_clock(int n)
-{
-#if defined(CLK_GPIO_Port) && defined(CLK_Pin)
-    for (int i = 0; i < n; i++) {
-        set_pin(CLK, !get_pin(CLK));
-        HAL_Delay(1);
-        set_pin(CLK, !get_pin(CLK));
-        HAL_Delay(1);
-    }
-#else
-    HAL_Delay(1);  // XXX
-#endif
-}
-
 void board_test(void)
 {
     uint16_t addr;
     uint8_t data;
     int io_write;
 
-
     /*
-     * release reset ...
+     * reset Z80
      */
-    run_clock(8);
-    set_reset_pin(0);  // reset
-    run_clock(8);
+    delay_us(8);
+    set_reset_pin(0);  // assert reset
+    delay_us(8);
 
     set_pin(BANK_SEL0, 0);  // A16
     set_pin(BANK_SEL1, 1);  // for TC551001 CE2 pin
@@ -122,10 +107,9 @@ void board_test(void)
     while (addr < rom_size) {
         set_data_pins(rom[addr]);
         set_wr_pin(0);  // write enable
-        HAL_Delay(1);
+        delay_us(1);
         set_wr_pin(1);  // clear write enable
         set_addr_pins(++addr);
-        HAL_Delay(1);
     }
 
 #if 0
@@ -163,7 +147,7 @@ void board_test(void)
     /*
      * release reset ...
      */
-    run_clock(8);
+    delay_us(8);
     set_reset_pin(1);  // release reset
 
     /*
@@ -189,18 +173,14 @@ void board_test(void)
             data = data_pins();
             switch (addr & 0xff) {
             case UART_DREG:
-#if 0
-                printf("%s: write %02X, %02X %c\r\n", __func__, addr & 0xff, data,
-                       (0x30 <= data && data <= 0x7f) ? data : ' ');
-#else
                 printf("%c", data);
-#endif
                 break;
             default:
+                printf("%s: write %02X, %02X %c\r\n", __func__, addr & 0xff, data,
+                       (0x30 <= data && data <= 0x7f) ? data : ' ');
                 break;
             }
         } else {
-            //printf("%s:  read %02X\r\n", __func__, addr & 0xff);
             switch (addr & 0xff) {
             case UART_DREG:
                 data = getchar();
@@ -209,6 +189,7 @@ void board_test(void)
                 data = input_key_available() ? 0xff : 0x02;
                 break;
             default:
+                printf("%s:  read %02X\r\n", __func__, addr & 0xff);
                 data = 0xff;
                 break;
             }
@@ -219,11 +200,10 @@ void board_test(void)
         set_busrq_pin(0);
         set_wait_pin(1);
         set_wait_pin_dir(0);
-        run_clock(8);
-        set_wait_pin_dir(1);
         while (get_pin(IORQ) == 0) {
-            run_clock(1);
+            ;
         }
+        set_wait_pin_dir(1);
         if (!io_write) {
             set_data_dir(1);  // input
         }
@@ -234,7 +214,7 @@ void board_test(void)
      * stop Z80
      */
     set_reset_pin(0);  // reset
-    run_clock(8);
+    delay_us(8);
     bus_master(1);
 
     printf("%s: halt.\r\n", __func__);
