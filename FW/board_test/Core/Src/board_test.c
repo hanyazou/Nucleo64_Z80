@@ -243,26 +243,6 @@ void board_test(void)
 }
 
 const unsigned char rom[] = {
-    0xf3,              // DI
-    0x3e, 0x0d,        // LD A, \r
-    0xd3, 0x00,        // OUT (00h), A
-    0x3e, 0x0a,        // LD A, \n
-    0xd3, 0x00,        // OUT (00h), A
-    0x3e, 0x48,        // LD A, 'H'
-    0xd3, 0x00,        // OUT (00h), A
-    0x3e, 0x45,        // LD A, 'E'
-    0xd3, 0x00,        // OUT (00h), A
-    0x3e, 0x4c,        // LD A, 'L'
-    0xd3, 0x00,        // OUT (00h), A
-    0x3e, 0x4c,        // LD A, 'L'
-    0xd3, 0x00,        // OUT (00h), A
-    0x3e, 0x4f,        // LD A, 'O'
-    0xd3, 0x00,        // OUT (00h), A
-    0x3e, 0x0d,        // LD A, \r
-    0xd3, 0x00,        // OUT (00h), A
-    0x3e, 0x0a,        // LD A, \n
-    0xd3, 0x00,        // OUT (00h), A
-    0x76,              // HALT
-    0x00,              // NOP
+#include "emubasic.inc"
 };
 size_t rom_size = sizeof(rom);
