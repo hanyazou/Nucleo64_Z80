@@ -98,6 +98,10 @@ int main(void)
   MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim5, TIM_CHANNEL_1);
+
+  //disable buffering for input/output stream
+  setvbuf(stdin, NULL, _IONBF, 0);
+  setvbuf(stdout, NULL, _IONBF, 0);
   board_test();
 
   /* USER CODE END 2 */
@@ -379,6 +383,26 @@ int fputc(int ch, FILE *f)
   HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
 
   return ch;
+}
+
+#ifdef __GNUC__
+int __io_getchar(void)
+#else
+int fgetc(FILE *f)
+#endif
+{
+  uint8_t ch = 0;
+  HAL_StatusTypeDef stat;
+  do {
+    __HAL_UART_CLEAR_OREFLAG(&huart2);
+    stat = HAL_UART_Receive(&huart2, (uint8_t *)&ch, 1, /* Timeout */ 0);
+  } while (ch == 0 || stat != HAL_OK);
+  return ch;
+}
+
+int input_key_available(void)
+{
+    return __HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE);
 }
 
 /* USER CODE END 4 */

@@ -170,14 +170,8 @@ void board_test(void)
      * run Z80
      */
     while (1) {
-        int i;
-        for (i = 0; i < 256; i++) {
-            if (get_pin(WAIT) == 0)
-                break;
-            run_clock(1);
-        }
-        if (256 <= i) {
-            break;
+        while (get_pin(WAIT)) {
+            ;
         }
 
         /*
@@ -188,26 +182,14 @@ void board_test(void)
             while (1);
         }
 
-        data = data_pins();
         addr = addr_pins();
         io_write = (get_pin(WR) == 0);
-        if (!io_write) {
-            set_data_pins(0xff);
-            set_data_dir(0);  // output
-        }
 
-        set_busrq_pin(0);
-        set_wait_pin(1);
-        set_wait_pin_dir(0);
-        run_clock(8);
-        set_wait_pin_dir(1);
-        while (get_pin(IORQ) == 0) {
-            run_clock(1);
-        }
         if (io_write) {
+            data = data_pins();
             switch (addr & 0xff) {
             case UART_DREG:
-#if 1
+#if 0
                 printf("%s: write %02X, %02X %c\r\n", __func__, addr & 0xff, data,
                        (0x30 <= data && data <= 0x7f) ? data : ' ');
 #else
@@ -219,6 +201,30 @@ void board_test(void)
             }
         } else {
             //printf("%s:  read %02X\r\n", __func__, addr & 0xff);
+            switch (addr & 0xff) {
+            case UART_DREG:
+                data = getchar();
+                break;
+            case UART_CREG:
+                data = input_key_available() ? 0xff : 0x02;
+                break;
+            default:
+                data = 0xff;
+                break;
+            }
+            set_data_pins(data);
+            set_data_dir(0);  // output
+        }
+
+        set_busrq_pin(0);
+        set_wait_pin(1);
+        set_wait_pin_dir(0);
+        run_clock(8);
+        set_wait_pin_dir(1);
+        while (get_pin(IORQ) == 0) {
+            run_clock(1);
+        }
+        if (!io_write) {
             set_data_dir(1);  // input
         }
         set_busrq_pin(1);

@@ -9,5 +9,6 @@
 #define INC_BOARD_TEST_H_
 
 extern void board_test(void);
+extern int input_key_available(void);
 
 #endif /* INC_BOARD_TEST_H_ */
