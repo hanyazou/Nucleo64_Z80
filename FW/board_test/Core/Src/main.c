@@ -341,14 +341,8 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : WAIT_Pin */
-  GPIO_InitStruct.Pin = WAIT_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
-  HAL_GPIO_Init(WAIT_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : RD_Pin WR_Pin */
-  GPIO_InitStruct.Pin = RD_Pin|WR_Pin;
+  /*Configure GPIO pins : WAIT_Pin RD_Pin WR_Pin */
+  GPIO_InitStruct.Pin = WAIT_Pin|RD_Pin|WR_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
