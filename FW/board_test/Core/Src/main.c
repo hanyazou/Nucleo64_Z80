@@ -339,14 +339,14 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(SPI1_SS_GPIO_Port, SPI1_SS_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, INT_Pin|BANK_SEL0_Pin|BANK_SEL1_Pin|BANK_SEL2_Pin
-                          |BUSRQ_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, Z80_INT_Pin|BANK_SEL0_Pin|BANK_SEL1_Pin|BANK_SEL2_Pin
+                          |Z80_BUSRQ_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(NMI_GPIO_Port, NMI_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Z80_NMI_GPIO_Port, Z80_NMI_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(RESET_GPIO_Port, RESET_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(Z80_RESET_GPIO_Port, Z80_RESET_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pins : PC13 PC14 PC15 PC0
                            PC1 PC2 PC3 PC4
@@ -360,30 +360,30 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : M1_Pin RFSH_Pin */
-  GPIO_InitStruct.Pin = M1_Pin|RFSH_Pin;
+  /*Configure GPIO pins : Z80_M1_Pin Z80_RFSH_Pin */
+  GPIO_InitStruct.Pin = Z80_M1_Pin|Z80_RFSH_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : SPI1_SS_Pin INT_Pin BANK_SEL0_Pin BANK_SEL1_Pin
-                           BANK_SEL2_Pin BUSRQ_Pin */
-  GPIO_InitStruct.Pin = SPI1_SS_Pin|INT_Pin|BANK_SEL0_Pin|BANK_SEL1_Pin
-                          |BANK_SEL2_Pin|BUSRQ_Pin;
+  /*Configure GPIO pins : SPI1_SS_Pin Z80_INT_Pin BANK_SEL0_Pin BANK_SEL1_Pin
+                           BANK_SEL2_Pin Z80_BUSRQ_Pin */
+  GPIO_InitStruct.Pin = SPI1_SS_Pin|Z80_INT_Pin|BANK_SEL0_Pin|BANK_SEL1_Pin
+                          |BANK_SEL2_Pin|Z80_BUSRQ_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : NMI_Pin */
-  GPIO_InitStruct.Pin = NMI_Pin;
+  /*Configure GPIO pin : Z80_NMI_Pin */
+  GPIO_InitStruct.Pin = Z80_NMI_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(NMI_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(Z80_NMI_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : MREQ_Pin IORQ_Pin */
-  GPIO_InitStruct.Pin = MREQ_Pin|IORQ_Pin;
+  /*Configure GPIO pins : Z80_MEMRQ_Pin Z80_IOREQ_Pin */
+  GPIO_InitStruct.Pin = Z80_MEMRQ_Pin|Z80_IOREQ_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -396,18 +396,18 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : WAIT_Pin RD_Pin WR_Pin */
-  GPIO_InitStruct.Pin = WAIT_Pin|RD_Pin|WR_Pin;
+  /*Configure GPIO pins : Z80_WAIT_Pin Z80_RD_Pin Z80_WR_Pin */
+  GPIO_InitStruct.Pin = Z80_WAIT_Pin|Z80_RD_Pin|Z80_WR_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : RESET_Pin */
-  GPIO_InitStruct.Pin = RESET_Pin;
+  /*Configure GPIO pin : Z80_RESET_Pin */
+  GPIO_InitStruct.Pin = Z80_RESET_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(RESET_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(Z80_RESET_GPIO_Port, &GPIO_InitStruct);
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
 
