@@ -23,14 +23,30 @@
 
 typedef uint8_t __bit;
 
+static inline void set_mask16(volatile uint16_t *r, uint16_t v, uint16_t m) {
+    *r = (*r & ~m) | (v & m);
+}
+
+static inline void set_mask32(volatile uint32_t *r, uint32_t v, uint32_t m) {
+    *r = (*r & ~m) | (v & m);
+}
+
 static uint8_t data_pins(void) { return (uint8_t)(GPIOB->IDR >> 8); }
 static void set_data_pins(uint8_t v) { GPIOB->ODR = ((GPIOB->ODR & 0xff) | ((uint16_t)(v) << 8)); }
 static void set_data_dir(uint8_t v) {
     GPIOB->MODER = ((GPIOB->MODER & 0x0000ffff) | ((v) ? 0 : 0x55550000));
 }
-static uint16_t addr_pins(void) { return (uint16_t)(GPIOC->IDR & 0xffff); }
-static void set_addr_pins(uint16_t v) { GPIOC->ODR = (v); }
-static void set_addr_dir(uint8_t v) { GPIOC->MODER = ((v) ? 0UL : 0x55555555UL); }
+static uint16_t addr_pins(void) {
+    return (uint16_t)(((GPIOA->IDR & 0x0700) << 5) | (GPIOC->IDR & 0x1fff));
+}
+static void set_addr_pins(uint16_t v) {
+    set_mask32(&GPIOA->ODR, v >> 5, 0x0700);  // PA8 ~ PA10
+    set_mask32(&GPIOC->ODR, v     , 0x1fff);  // PC0 ~ PC12
+}
+static void set_addr_dir(uint8_t v) {
+    set_mask32(&GPIOA->MODER, v ? 0UL : 0x55555555UL, 0x003f0000);  // PA8 ~ PA10
+    set_mask32(&GPIOC->MODER, v ? 0UL : 0x55555555UL, 0x03ffffff);  // PC0 ~ PC12
+}
 
 #define PIN_DIR_OUTPUT 0
 #define PIN_DIR_INPUT 1
@@ -102,7 +118,9 @@ void board_test(void)
 
     set_pin(BANK_SEL0, 0);  // A16
     set_pin(BANK_SEL1, 1);  // for TC551001 CE2 pin
+    #ifdef BANK_SEL2
     set_pin(BANK_SEL2, 0);  // A18
+    #endif
 
     bus_master(1);
 

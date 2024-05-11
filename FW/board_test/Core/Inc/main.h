@@ -61,16 +61,14 @@ extern void delay_us(uint16_t us);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define Z80_M1_Pin GPIO_PIN_1
-#define Z80_M1_GPIO_Port GPIOA
+#define Z80_WAIT_Pin GPIO_PIN_1
+#define Z80_WAIT_GPIO_Port GPIOA
 #define USART_TX_Pin GPIO_PIN_2
 #define USART_TX_GPIO_Port GPIOA
 #define USART_RX_Pin GPIO_PIN_3
 #define USART_RX_GPIO_Port GPIOA
 #define SPI1_SS_Pin GPIO_PIN_4
 #define SPI1_SS_GPIO_Port GPIOA
-#define Z80_INT_Pin GPIO_PIN_5
-#define Z80_INT_GPIO_Port GPIOA
 #define BANK_SEL0_Pin GPIO_PIN_6
 #define BANK_SEL0_GPIO_Port GPIOA
 #define BANK_SEL1_Pin GPIO_PIN_7
@@ -81,12 +79,12 @@ extern void delay_us(uint16_t us);
 #define Z80_MEMRQ_GPIO_Port GPIOB
 #define Z80_IOREQ_Pin GPIO_PIN_2
 #define Z80_IOREQ_GPIO_Port GPIOB
-#define BANK_SEL2_Pin GPIO_PIN_8
-#define BANK_SEL2_GPIO_Port GPIOA
-#define Z80_RFSH_Pin GPIO_PIN_9
-#define Z80_RFSH_GPIO_Port GPIOA
-#define Z80_WAIT_Pin GPIO_PIN_10
-#define Z80_WAIT_GPIO_Port GPIOA
+#define Z80_A13_Pin GPIO_PIN_8
+#define Z80_A13_GPIO_Port GPIOA
+#define Z80_A14_Pin GPIO_PIN_9
+#define Z80_A14_GPIO_Port GPIOA
+#define Z80_A15_Pin GPIO_PIN_10
+#define Z80_A15_GPIO_Port GPIOA
 #define Z80_RD_Pin GPIO_PIN_11
 #define Z80_RD_GPIO_Port GPIOA
 #define Z80_WR_Pin GPIO_PIN_12
