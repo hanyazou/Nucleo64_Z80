@@ -22,6 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -32,6 +33,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define DS1307_ADDR (0x68 << 1)
 
 /* USER CODE END PD */
 
@@ -104,6 +106,7 @@ int main(void)
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim1);
 
+  uint8_t i2c_found_ds1307 = 0;
   printf("I2C scanner\r\n");
   HAL_StatusTypeDef result;
   for (uint8_t addr = 0; addr < 128; addr++) {
@@ -117,6 +120,9 @@ int main(void)
     result = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(addr << 1), 2, 2);
     if (result == HAL_OK) {
         printf(" %02X", addr);
+        if ((addr << 1) == DS1307_ADDR) {
+            i2c_found_ds1307 = 1;
+        }
     } else {
         printf(" __");
     }
@@ -125,6 +131,33 @@ int main(void)
     }
   }
   printf("\r\n");
+
+  if (i2c_found_ds1307) {
+    uint8_t datetime[7];
+    static uint8_t prev_datetime[7] = { 0 };
+    int i = 0;
+
+    printf("DS1307 RTC test\r\n");
+    datetime[0] = 0x45;
+    datetime[1] = 0x30;
+    datetime[2] = 0x13;
+    datetime[3] = 0x12;
+    datetime[4] = 0x05;
+    datetime[5] = 0x06;
+    datetime[6] = 0x24;
+    result = HAL_I2C_Mem_Write(&hi2c1, DS1307_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT,
+                               datetime, sizeof(datetime), 1000);
+    while (i < 14) {
+      result = HAL_I2C_Mem_Read(&hi2c1, DS1307_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT,
+                                datetime, sizeof(datetime), 1000);
+      if (memcmp(datetime, prev_datetime, sizeof(datetime)) != 0) {
+        memcpy(prev_datetime, datetime, sizeof(datetime));
+        printf("20%02X/%02X/%02X %02X:%02X:%02X \r\n",
+               datetime[6], datetime[5], datetime[4], datetime[2], datetime[1], datetime[0]);
+        i++;
+      }
+    }
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
