@@ -104,6 +104,27 @@ int main(void)
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start(&htim1);
 
+  printf("I2C scanner\r\n");
+  HAL_StatusTypeDef result;
+  for (uint8_t addr = 0; addr < 128; addr++) {
+    if (addr % 16 == 0) {
+        printf("%02X:", addr);
+    }
+    if (addr == 0) {
+        printf("   ");
+        continue;
+    }
+    result = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(addr << 1), 2, 2);
+    if (result == HAL_OK) {
+        printf(" %02X", addr);
+    } else {
+        printf(" __");
+    }
+    if (addr % 16 == 15) {
+        printf("\r\n");
+    }
+  }
+  printf("\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
