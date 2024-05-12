@@ -55,6 +55,8 @@ void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
+extern int input_key_available(void);
+extern void delay_us(uint16_t us);
 
 /* USER CODE END EFP */
 

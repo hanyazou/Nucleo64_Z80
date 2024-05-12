@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
 
 /* USER CODE END Includes */
 
@@ -101,6 +102,7 @@ int main(void)
   MX_TIM1_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_Base_Start(&htim1);
 
   /* USER CODE END 2 */
 
@@ -455,6 +457,52 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+  * @brief  Retargets the C library printf function to the USART.
+  * @param  None
+  * @retval None
+  */
+#ifdef __GNUC__
+/* With GCC/RAISONANCE, small printf (option LD Linker->Libraries->Small printf
+   set to 'Yes') calls __io_putchar() */
+int __io_putchar(int ch)
+#else
+int fputc(int ch, FILE *f)
+#endif /* __GNUC__ */
+{
+  /* Place your implementation of fputc here */
+  /* e.g. write a character to the USART1 and Loop until the end of transmission */
+  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
+
+  return ch;
+}
+
+#ifdef __GNUC__
+int __io_getchar(void)
+#else
+int fgetc(FILE *f)
+#endif
+{
+  uint8_t ch = 0;
+  HAL_StatusTypeDef stat;
+  do {
+    __HAL_UART_CLEAR_OREFLAG(&huart2);
+    stat = HAL_UART_Receive(&huart2, (uint8_t *)&ch, 1, /* Timeout */ 0);
+  } while (ch == 0 || stat != HAL_OK);
+  return ch;
+}
+
+int input_key_available(void)
+{
+    return __HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE);
+}
+
+void delay_us (uint16_t us)
+{
+  __HAL_TIM_SET_COUNTER(&htim1,0);  // set the counter value a 0
+  while (__HAL_TIM_GET_COUNTER(&htim1) < us * 8 + 1);  // wait for the counter to reach the us input in the parameter
+}
 
 /* USER CODE END 4 */
 
