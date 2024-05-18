@@ -21,6 +21,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <stdio.h>
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -31,6 +33,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define DS1307_ADDR (0x68 << 1)
 
 /* USER CODE END PD */
 
@@ -101,7 +104,60 @@ int main(void)
   MX_TIM1_Init();
   MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
+  HAL_TIM_Base_Start(&htim1);
 
+  uint8_t i2c_found_ds1307 = 0;
+  printf("I2C scanner\r\n");
+  HAL_StatusTypeDef result;
+  for (uint8_t addr = 0; addr < 128; addr++) {
+    if (addr % 16 == 0) {
+        printf("%02X:", addr);
+    }
+    if (addr == 0) {
+        printf("   ");
+        continue;
+    }
+    result = HAL_I2C_IsDeviceReady(&hi2c1, (uint16_t)(addr << 1), 2, 2);
+    if (result == HAL_OK) {
+        printf(" %02X", addr);
+        if ((addr << 1) == DS1307_ADDR) {
+            i2c_found_ds1307 = 1;
+        }
+    } else {
+        printf(" __");
+    }
+    if (addr % 16 == 15) {
+        printf("\r\n");
+    }
+  }
+  printf("\r\n");
+
+  if (i2c_found_ds1307) {
+    uint8_t datetime[7];
+    static uint8_t prev_datetime[7] = { 0 };
+    int i = 0;
+
+    printf("DS1307 RTC test\r\n");
+    datetime[0] = 0x45;
+    datetime[1] = 0x30;
+    datetime[2] = 0x13;
+    datetime[3] = 0x12;
+    datetime[4] = 0x05;
+    datetime[5] = 0x06;
+    datetime[6] = 0x24;
+    result = HAL_I2C_Mem_Write(&hi2c1, DS1307_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT,
+                               datetime, sizeof(datetime), 1000);
+    while (i < 14) {
+      result = HAL_I2C_Mem_Read(&hi2c1, DS1307_ADDR, 0x00, I2C_MEMADD_SIZE_8BIT,
+                                datetime, sizeof(datetime), 1000);
+      if (memcmp(datetime, prev_datetime, sizeof(datetime)) != 0) {
+        memcpy(prev_datetime, datetime, sizeof(datetime));
+        printf("20%02X/%02X/%02X %02X:%02X:%02X \r\n",
+               datetime[6], datetime[5], datetime[4], datetime[2], datetime[1], datetime[0]);
+        i++;
+      }
+    }
+  }
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -455,6 +511,52 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+
+/**
+  * @brief  Retargets the C library printf function to the USART.
+  * @param  None
+  * @retval None
+  */
+#ifdef __GNUC__
+/* With GCC/RAISONANCE, small printf (option LD Linker->Libraries->Small printf
+   set to 'Yes') calls __io_putchar() */
+int __io_putchar(int ch)
+#else
+int fputc(int ch, FILE *f)
+#endif /* __GNUC__ */
+{
+  /* Place your implementation of fputc here */
+  /* e.g. write a character to the USART1 and Loop until the end of transmission */
+  HAL_UART_Transmit(&huart2, (uint8_t *)&ch, 1, 0xFFFF);
+
+  return ch;
+}
+
+#ifdef __GNUC__
+int __io_getchar(void)
+#else
+int fgetc(FILE *f)
+#endif
+{
+  uint8_t ch = 0;
+  HAL_StatusTypeDef stat;
+  do {
+    __HAL_UART_CLEAR_OREFLAG(&huart2);
+    stat = HAL_UART_Receive(&huart2, (uint8_t *)&ch, 1, /* Timeout */ 0);
+  } while (ch == 0 || stat != HAL_OK);
+  return ch;
+}
+
+int input_key_available(void)
+{
+    return __HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE);
+}
+
+void delay_us (uint16_t us)
+{
+  __HAL_TIM_SET_COUNTER(&htim1,0);  // set the counter value a 0
+  while (__HAL_TIM_GET_COUNTER(&htim1) < us * 8 + 1);  // wait for the counter to reach the us input in the parameter
+}
 
 /* USER CODE END 4 */
 
