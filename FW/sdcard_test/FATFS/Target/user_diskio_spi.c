@@ -24,7 +24,7 @@
 
 //It is designed to be wrapped by a cubemx generated user_diskio.c file.
 
-#include "stm32f3xx_hal.h" /* Provide the low-level HAL functions */
+#include "main.h" /* Provide the low-level HAL functions */
 #include "user_diskio_spi.h"
 
 //Make sure you set #define SD_SPI_HANDLE as some hspix in main.h
@@ -132,7 +132,7 @@ void xmit_spi_multi (
 	UINT btx			/* Number of bytes to send (even number) */
 )
 {
-	HAL_SPI_Transmit(&SD_SPI_HANDLE, buff, btx, HAL_MAX_DELAY);
+	HAL_SPI_Transmit(&SD_SPI_HANDLE, (BYTE*)buff, btx, HAL_MAX_DELAY);
 }
 #endif
 

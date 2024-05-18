@@ -97,6 +97,10 @@ void Error_Handler(void);
 #define Z80_RESET_GPIO_Port GPIOD
 
 /* USER CODE BEGIN Private defines */
+extern SPI_HandleTypeDef hspi1;
+#define SD_SPI_HANDLE hspi1
+#define SD_CS_GPIO_Port SPI1_SS_GPIO_Port
+#define SD_CS_Pin SPI1_SS_Pin
 
 /* USER CODE END Private defines */
 
