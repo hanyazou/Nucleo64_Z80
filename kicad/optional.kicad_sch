@@ -6,8 +6,8 @@
 	(paper "A4")
 	(title_block
 		(title "Nucleo64 Z80")
-		(date "2024-04-29")
-		(rev "1.0")
+		(date "2024-05-18")
+		(rev "1.1")
 	)
 	(lib_symbols
 		(symbol "74xx:74LS125"
@@ -4132,6 +4132,28 @@
 			)
 		)
 	)
+	(global_label "3V3"
+		(shape input)
+		(at 245.11 148.59 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "3c11f753-fef5-4061-9b36-2e99ffc7c20f")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 238.6966 148.59 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+				(hide yes)
+			)
+		)
+	)
 	(global_label "A16"
 		(shape output)
 		(at 170.18 69.85 0)
@@ -4880,6 +4902,28 @@
 			)
 		)
 	)
+	(global_label "3V3"
+		(shape input)
+		(at 210.82 148.59 180)
+		(fields_autoplaced yes)
+		(effects
+			(font
+				(size 1.27 1.27)
+			)
+			(justify right)
+		)
+		(uuid "c1c99cf1-a3cd-4e6f-b7d2-3f9e4333d976")
+		(property "Intersheetrefs" "${INTERSHEET_REFS}"
+			(at 204.4066 148.59 0)
+			(effects
+				(font
+					(size 1.27 1.27)
+				)
+				(justify right)
+				(hide yes)
+			)
+		)
+	)
 	(global_label "D1"
 		(shape input)
 		(at 210.82 85.09 180)
@@ -5122,28 +5166,6 @@
 			)
 		)
 	)
-	(global_label "VCC"
-		(shape input)
-		(at 210.82 148.59 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "e4b9218c-d1a6-411c-bc4b-57e3886961d3")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 204.2856 148.59 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
-				(hide yes)
-			)
-		)
-	)
 	(global_label "I2C1_SCL"
 		(shape input)
 		(at 210.82 119.38 180)
@@ -5382,28 +5404,6 @@
 					(size 1.27 1.27)
 				)
 				(justify left)
-				(hide yes)
-			)
-		)
-	)
-	(global_label "VCC"
-		(shape input)
-		(at 245.11 148.59 180)
-		(fields_autoplaced yes)
-		(effects
-			(font
-				(size 1.27 1.27)
-			)
-			(justify right)
-		)
-		(uuid "ff47a8ba-7935-4f65-8d7b-bdbed1962367")
-		(property "Intersheetrefs" "${INTERSHEET_REFS}"
-			(at 238.5756 148.59 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(justify right)
 				(hide yes)
 			)
 		)

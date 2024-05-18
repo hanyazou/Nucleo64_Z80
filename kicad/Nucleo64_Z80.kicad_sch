@@ -6,8 +6,8 @@
 	(paper "A4")
 	(title_block
 		(title "Nucleo64 Z80")
-		(date "2024-04-29")
-		(rev "1.0")
+		(date "2024-05-18")
+		(rev "1.1")
 	)
 	(lib_symbols
 		(symbol "CPU:Z80CPU"
