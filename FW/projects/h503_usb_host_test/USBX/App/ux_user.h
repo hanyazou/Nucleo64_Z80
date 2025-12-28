@@ -161,7 +161,7 @@
    that belong to these classes.  */
 /* #define UX_MAX_CLASSES    2 */
 
-/* #define UX_MAX_CLASS_DRIVER    3 */
+#define UX_MAX_CLASS_DRIVER       2
 
 /* Defined, this value is the maximum number of classes in the device stack that can be loaded by
    USBX.  */
@@ -181,7 +181,7 @@
    scaled down to conserve memory. Note that this value represents the total number of devices
    regardless of the number of USB buses in the system.  */
 
-/* #define UX_MAX_DEVICES    127 */
+#define UX_MAX_DEVICES       2
 
 /* Defined, this value is the maximum number of interfaces in the device framework.  */
 
@@ -277,9 +277,9 @@
 /* Defined, this value represents the maximum number of Ed, regular TDs and Isochronous TDs. These values
    depend on the type of host controller and can be reduced in memory constrained environments.  */
 
-/* #define UX_MAX_ED        80 */
+#define UX_MAX_ED           8
 
-/* #define UX_MAX_TD        128 */
+#define UX_MAX_TD           8
 
 /* #define UX_MAX_ISO_TD    1 */
 
@@ -543,7 +543,7 @@
 
 /* Defined, this value represents the size of the log pool.
 */
-/* #define UX_DEBUG_LOG_SIZE          (1024 * 16) */
+#define UX_DEBUG_LOG_SIZE             0
 
 /* Defined, this macro represents the non-blocking function to return time tick.
    This macro is used only in standalone mode.
@@ -610,7 +610,7 @@
 
 /* Define USBX max TT. */
 
-/* #define UX_MAX_TT                        8 */
+#define UX_MAX_TT                           2
 
 /* Defined, this option enables the basic USBX error checking. This define is typically used
    when the application is debugging and removed after the application is fully debugged.  */
