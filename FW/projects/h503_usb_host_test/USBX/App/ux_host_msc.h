@@ -1,9 +1,9 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file    app_usbx_host.h
+  * @file    ux_host_msc.h
   * @author  MCD Application Team
-  * @brief   USBX Host applicative header file
+  * @brief   USBX Host MSC applicative header file
   ******************************************************************************
     * @attention
   *
@@ -18,8 +18,8 @@
   */
 /* USER CODE END Header */
 /* Define to prevent recursive inclusion -------------------------------------*/
-#ifndef __APP_USBX_HOST_H__
-#define __APP_USBX_HOST_H__
+#ifndef __UX_HOST_MSC_H__
+#define __UX_HOST_MSC_H__
 
 #ifdef __cplusplus
 extern "C" {
@@ -27,11 +27,11 @@ extern "C" {
 
 /* Includes ------------------------------------------------------------------*/
 #include "ux_api.h"
-#include "main.h"
-#include "ux_host_msc.h"
+#include "ux_host_class_storage.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -40,10 +40,6 @@ extern "C" {
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/
-#define USBX_HOST_MEMORY_STACK_SIZE     0x2000
-
-#define UX_HOST_APP_THREAD_STACK_SIZE   1024
-#define UX_HOST_APP_THREAD_PRIO         10
 /* USER CODE BEGIN EC */
 
 /* USER CODE END EC */
@@ -54,7 +50,6 @@ extern "C" {
 /* USER CODE END EM */
 
 /* Exported functions prototypes ---------------------------------------------*/
-UINT MX_USBX_Host_Init(VOID *memory_ptr);
 
 /* USER CODE BEGIN EFP */
 
@@ -65,22 +60,6 @@ UINT MX_USBX_Host_Init(VOID *memory_ptr);
 
 /* USER CODE END PD */
 
-#ifndef UX_HOST_APP_THREAD_NAME
-#define UX_HOST_APP_THREAD_NAME  "USBX App Host Main Thread"
-#endif
-
-#ifndef UX_HOST_APP_THREAD_PREEMPTION_THRESHOLD
-#define UX_HOST_APP_THREAD_PREEMPTION_THRESHOLD  UX_HOST_APP_THREAD_PRIO
-#endif
-
-#ifndef UX_HOST_APP_THREAD_TIME_SLICE
-#define UX_HOST_APP_THREAD_TIME_SLICE  TX_NO_TIME_SLICE
-#endif
-
-#ifndef UX_HOST_APP_THREAD_START_OPTION
-#define UX_HOST_APP_THREAD_START_OPTION  TX_AUTO_START
-#endif
-
 /* USER CODE BEGIN 1 */
 
 /* USER CODE END 1 */
@@ -88,4 +67,4 @@ UINT MX_USBX_Host_Init(VOID *memory_ptr);
 #ifdef __cplusplus
 }
 #endif
-#endif /* __APP_USBX_HOST_H__ */
+#endif  /* __UX_HOST_MSC_H__ */
