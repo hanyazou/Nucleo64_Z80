@@ -237,6 +237,7 @@ VOID ux_host_error_callback(UINT system_level, UINT system_context, UINT error_c
     case UX_DEVICE_ENUMERATION_FAILURE:
 
       /* USER CODE BEGIN UX_DEVICE_ENUMERATION_FAILURE */
+      printf("%s: UX_DEVICE_ENUMERATION_FAILURE\r\n", __func__);
 
       /* USER CODE END UX_DEVICE_ENUMERATION_FAILURE */
 
@@ -245,6 +246,7 @@ VOID ux_host_error_callback(UINT system_level, UINT system_context, UINT error_c
     case  UX_NO_DEVICE_CONNECTED:
 
       /* USER CODE BEGIN UX_NO_DEVICE_CONNECTED */
+      printf("%s: UX_NO_DEVICE_CONNECTED\r\n", __func__);
 
       /* USER CODE END UX_NO_DEVICE_CONNECTED */
 
@@ -260,7 +262,20 @@ VOID ux_host_error_callback(UINT system_level, UINT system_context, UINT error_c
   }
 
   /* USER CODE BEGIN ux_host_error_callback1 */
-
+  switch (error_code)
+  {
+    case UX_MEMORY_CORRUPTED:
+      printf("%s: UX_MEMORY_CORRUPTED\r\n", __func__);
+      break;
+    case UX_MEMORY_INSUFFICIENT:
+      printf("%s: UX_MEMORY_INSUFFICIENT\r\n", __func__);
+      break;
+    case TX_WAIT_ERROR:
+      break;
+    default:
+      printf("%s: unknown error\r\n", __func__);
+      break;
+  }
   /* USER CODE END ux_host_error_callback1 */
 }
 /* USER CODE BEGIN 1 */
