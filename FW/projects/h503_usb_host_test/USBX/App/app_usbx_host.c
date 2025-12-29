@@ -158,6 +158,7 @@ UINT ux_host_event_callback(ULONG event, UX_HOST_CLASS *current_class, VOID *cur
     case UX_DEVICE_INSERTION:
 
       /* USER CODE BEGIN UX_DEVICE_INSERTION */
+      printf("%s: UX_DEVICE_INSERTION\r\n", __func__);
 
       /* USER CODE END UX_DEVICE_INSERTION */
 
@@ -166,6 +167,7 @@ UINT ux_host_event_callback(ULONG event, UX_HOST_CLASS *current_class, VOID *cur
     case UX_DEVICE_REMOVAL:
 
       /* USER CODE BEGIN UX_DEVICE_REMOVAL */
+      printf("%s: UX_DEVICE_REMOVAL\r\n", __func__);
 
       /* USER CODE END UX_DEVICE_REMOVAL */
 
@@ -174,6 +176,7 @@ UINT ux_host_event_callback(ULONG event, UX_HOST_CLASS *current_class, VOID *cur
     case UX_DEVICE_CONNECTION:
 
       /* USER CODE BEGIN UX_DEVICE_CONNECTION */
+      printf("%s: UX_DEVICE_CONNECTION\r\n", __func__);
 
       /* USER CODE END UX_DEVICE_CONNECTION */
 
@@ -182,6 +185,7 @@ UINT ux_host_event_callback(ULONG event, UX_HOST_CLASS *current_class, VOID *cur
     case UX_DEVICE_DISCONNECTION:
 
       /* USER CODE BEGIN UX_DEVICE_DISCONNECTION */
+      printf("%s: UX_DEVICE_DISCONNECTION\r\n", __func__);
 
       /* USER CODE END UX_DEVICE_DISCONNECTION */
 
@@ -190,6 +194,7 @@ UINT ux_host_event_callback(ULONG event, UX_HOST_CLASS *current_class, VOID *cur
     default:
 
       /* USER CODE BEGIN EVENT_DEFAULT */
+      printf("%s: unknown event\r\n", __func__);
 
       /* USER CODE END EVENT_DEFAULT */
 
