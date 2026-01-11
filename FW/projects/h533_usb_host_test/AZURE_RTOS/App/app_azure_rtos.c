@@ -177,7 +177,7 @@ VOID tx_application_define(VOID *first_unused_memory)
     UINT status = ux_host_stack_hcd_register(
       (UCHAR *)"HCD_FS",
       ux_hcd_stm32_initialize,
-      USB_DRD_FS_BASE,
+      USB_DRD_FS,
       (ULONG)&hhcd_USB_DRD_FS);
     if (status != UX_SUCCESS) {
       printf("ux_host_stack_hcd_register() failed\r\n");
