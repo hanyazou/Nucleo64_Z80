@@ -16,7 +16,7 @@
  * - CBI transport:
  *     ADSC (Control EP0, 12-byte UFI cmd block)
  *     DATA phase via Bulk (optional)
- *     STATUS via Interrupt IN (2 bytes) (optional in practice: some devices delay/NAK a lot)
+ *     STATUS via Interrupt IN (2 bytes)
  *
  * Endpoints (from capture):
  *   Bulk OUT : 0x01
@@ -26,12 +26,11 @@
  * ThreadX:
  *   TX_TIMER_TICKS_PER_SECOND = 100 -> 1 tick = 10ms
  *
- * Key behavior (fix vs v4):
- * - Do NOT resend ADSC every time Bulk/INT "fails fast".
- *   For slow devices (spin-up/seek), Bulk IN / INT IN may return quickly with a
- *   non-success completion code. We treat that as "not ready yet" and poll again.
- * - Poll DATA and STATUS until success or overall timeout.
- * - Only do Command Block Reset + ClearHalt when we see STALL.
+ * IMPORTANT FIX vs v5:
+ * - ux_transfer_request_timeout_value is in *ticks* (not milliseconds).
+ *   v5 passed "ms" directly, so a 30000ms timeout became 30000 ticks (= 300s).
+ *   This file converts ms -> ticks for all transfers.
+ * - For polling loops, we use short per-try timeouts (e.g., 500ms) so logs keep flowing.
  */
 
 /* ------------------- Tuning ------------------- */
@@ -45,11 +44,19 @@
 #endif
 
 #ifndef MSC_TEST_POLL_SLEEP_MS
-#define MSC_TEST_POLL_SLEEP_MS  50u   /* 50ms between polls */
+#define MSC_TEST_POLL_SLEEP_MS  50u
+#endif
+
+#ifndef MSC_TEST_BULK_TRY_TIMEOUT_MS
+#define MSC_TEST_BULK_TRY_TIMEOUT_MS  500u   /* per attempt */
+#endif
+
+#ifndef MSC_TEST_INT_TRY_TIMEOUT_MS
+#define MSC_TEST_INT_TRY_TIMEOUT_MS   200u   /* per attempt */
 #endif
 
 #ifndef MSC_TEST_TUR_TOTAL_MS
-#define MSC_TEST_TUR_TOTAL_MS   10000u /* up to 10s waiting for ready */
+#define MSC_TEST_TUR_TOTAL_MS   10000u
 #endif
 
 static ULONG ms_to_ticks(ULONG ms)
@@ -129,13 +136,14 @@ static const char *ux_status_str(UINT s)
 
 static void print_xfer(const char *tag, UX_TRANSFER *t, UINT call_status)
 {
-    printf("[msc_test] %s: call=%s(%u) cc=%s(%u) actual=%lu req=%lu\r\n",
+    printf("[msc_test] %s: call=%s(%u) cc=%s(%u) actual=%lu req=%lu timeout_ticks=%lu\r\n",
            tag,
            ux_status_str(call_status), (unsigned)call_status,
            ux_status_str(t->ux_transfer_request_completion_code),
            (unsigned)t->ux_transfer_request_completion_code,
            (unsigned long)t->ux_transfer_request_actual_length,
-           (unsigned long)t->ux_transfer_request_requested_length);
+           (unsigned long)t->ux_transfer_request_requested_length,
+           (unsigned long)t->ux_transfer_request_timeout_value);
 }
 
 /* ------------------- Stack activation / endpoint lookup ------------------- */
@@ -206,7 +214,7 @@ static UINT endpoint_xfer_once(UX_ENDPOINT *ep, UCHAR *buf, ULONG len, ULONG tim
     t->ux_transfer_request_endpoint = ep;
     t->ux_transfer_request_data_pointer = buf;
     t->ux_transfer_request_requested_length = len;
-    t->ux_transfer_request_timeout_value = timeout_ms;
+    t->ux_transfer_request_timeout_value = ms_to_ticks(timeout_ms);
 
     t->ux_transfer_request_maximum_length = len;
     t->ux_transfer_request_packet_length  = ep->ux_endpoint_descriptor.wMaxPacketSize;
@@ -225,14 +233,14 @@ static UINT clear_halt(UX_DEVICE *dev, UCHAR ep_addr)
 
     t->ux_transfer_request_endpoint = ep0;
 
-    t->ux_transfer_request_type = 0x02;      /* Host->Dev | Standard | Endpoint */
-    t->ux_transfer_request_function = 0x01;  /* CLEAR_FEATURE */
-    t->ux_transfer_request_value = 0x0000;   /* ENDPOINT_HALT */
+    t->ux_transfer_request_type = 0x02;
+    t->ux_transfer_request_function = 0x01;
+    t->ux_transfer_request_value = 0x0000;
     t->ux_transfer_request_index = ep_addr;
 
     t->ux_transfer_request_data_pointer = UX_NULL;
     t->ux_transfer_request_requested_length = 0;
-    t->ux_transfer_request_timeout_value = MSC_TEST_TIMEOUT_MS;
+    t->ux_transfer_request_timeout_value = ms_to_ticks(1000u);
 
     UINT st = ux_host_stack_transfer_request(t);
     print_xfer("CLEAR_FEATURE(HALT)", t, st);
@@ -240,7 +248,7 @@ static UINT clear_halt(UX_DEVICE *dev, UCHAR ep_addr)
     return t->ux_transfer_request_completion_code;
 }
 
-/* CBI ADSC: class-specific request carrying 12-byte command block. */
+/* CBI ADSC */
 static UINT cbi_adsc(UX_DEVICE *dev, UINT ifnum, UCHAR cmdblk[12])
 {
     UX_ENDPOINT *ep0 = &dev->ux_device_control_endpoint;
@@ -248,14 +256,14 @@ static UINT cbi_adsc(UX_DEVICE *dev, UINT ifnum, UCHAR cmdblk[12])
 
     t->ux_transfer_request_endpoint = ep0;
 
-    t->ux_transfer_request_type = 0x21;      /* Host->Dev | Class | Interface */
-    t->ux_transfer_request_function = 0x00;  /* ADSC */
+    t->ux_transfer_request_type = 0x21;
+    t->ux_transfer_request_function = 0x00;
     t->ux_transfer_request_value = 0;
     t->ux_transfer_request_index = ifnum;
 
     t->ux_transfer_request_data_pointer = cmdblk;
     t->ux_transfer_request_requested_length = 12;
-    t->ux_transfer_request_timeout_value = MSC_TEST_TIMEOUT_MS;
+    t->ux_transfer_request_timeout_value = ms_to_ticks(1000u);
 
     t->ux_transfer_request_maximum_length = 12;
     t->ux_transfer_request_packet_length  = ep0->ux_endpoint_descriptor.wMaxPacketSize;
@@ -278,12 +286,11 @@ static void ufi_from_cdb10(UCHAR out12[12], const UCHAR cdb10[10])
     memcpy(out12, cdb10, 10);
 }
 
-/* CBI Command Block Reset (CBI spec 2.2): 1Dh 04h FFh FFh FFh FFh ... */
 static void cbi_command_block_reset(UX_DEVICE *dev, UINT ifnum)
 {
     UCHAR ufi[12];
     memset(ufi, 0xFF, sizeof(ufi));
-    ufi[0] = 0x1D; /* SEND DIAGNOSTIC */
+    ufi[0] = 0x1D;
     ufi[1] = 0x04;
 
     printf("[msc_test] >>> Command Block Reset\r\n");
@@ -293,7 +300,6 @@ static void cbi_command_block_reset(UX_DEVICE *dev, UINT ifnum)
     (void)clear_halt(dev, 0x82);
 }
 
-/* Poll Bulk IN until we receive some data or we reach overall_timeout_ms. */
 static UINT poll_bulk_in(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_in,
                          UCHAR *buf, ULONG len, ULONG overall_timeout_ms)
 {
@@ -301,10 +307,8 @@ static UINT poll_bulk_in(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_in,
     ULONG remaining = overall_timeout_ms;
 
     while (remaining > 0) {
-        UINT st = endpoint_xfer_once(ep_in, buf, len, MSC_TEST_TIMEOUT_MS, "Bulk IN");
-        if (st == UX_SUCCESS) {
-            return UX_SUCCESS;
-        }
+        UINT st = endpoint_xfer_once(ep_in, buf, len, MSC_TEST_BULK_TRY_TIMEOUT_MS, "Bulk IN");
+        if (st == UX_SUCCESS) return UX_SUCCESS;
 
 #ifdef UX_TRANSFER_STALLED
         if (st == UX_TRANSFER_STALLED) {
@@ -314,16 +318,12 @@ static UINT poll_bulk_in(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_in,
 #endif
 
         tx_thread_sleep(sleep_ticks);
-        if (remaining > MSC_TEST_POLL_SLEEP_MS) {
-            remaining -= MSC_TEST_POLL_SLEEP_MS;
-        } else {
-            remaining = 0;
-        }
+        if (remaining > MSC_TEST_POLL_SLEEP_MS) remaining -= MSC_TEST_POLL_SLEEP_MS;
+        else remaining = 0;
     }
     return UX_ERROR;
 }
 
-/* Poll INT-IN status until success or overall_timeout_ms. */
 static UINT poll_int_status(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_int,
                             UCHAR st2[2], ULONG overall_timeout_ms)
 {
@@ -331,10 +331,8 @@ static UINT poll_int_status(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_int,
     ULONG remaining = overall_timeout_ms;
 
     while (remaining > 0) {
-        UINT st = endpoint_xfer_once(ep_int, st2, 2, MSC_TEST_TIMEOUT_MS, "INT-IN status");
-        if (st == UX_SUCCESS) {
-            return UX_SUCCESS;
-        }
+        UINT st = endpoint_xfer_once(ep_int, st2, 2, MSC_TEST_INT_TRY_TIMEOUT_MS, "INT-IN status");
+        if (st == UX_SUCCESS) return UX_SUCCESS;
 
 #ifdef UX_TRANSFER_STALLED
         if (st == UX_TRANSFER_STALLED) {
@@ -344,21 +342,12 @@ static UINT poll_int_status(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_int,
 #endif
 
         tx_thread_sleep(sleep_ticks);
-        if (remaining > MSC_TEST_POLL_SLEEP_MS) {
-            remaining -= MSC_TEST_POLL_SLEEP_MS;
-        } else {
-            remaining = 0;
-        }
+        if (remaining > MSC_TEST_POLL_SLEEP_MS) remaining -= MSC_TEST_POLL_SLEEP_MS;
+        else remaining = 0;
     }
     return UX_ERROR;
 }
 
-/*
- * Execute CBI command:
- *   - Send ADSC once.
- *   - If data_in: poll Bulk IN until it succeeds (or overall timeout).
- *   - Poll INT status until it succeeds (or overall timeout).
- */
 static UINT cbi_exec_in(UX_DEVICE *dev, UINT ifnum,
                         UX_ENDPOINT *ep_in, UX_ENDPOINT *ep_int,
                         const UCHAR cmdblk_in[12],
@@ -371,9 +360,7 @@ static UINT cbi_exec_in(UX_DEVICE *dev, UINT ifnum,
     UINT st = cbi_adsc(dev, ifnum, cmdblk);
     if (st != UX_SUCCESS) {
 #ifdef UX_TRANSFER_STALLED
-        if (st == UX_TRANSFER_STALLED) {
-            cbi_command_block_reset(dev, ifnum);
-        }
+        if (st == UX_TRANSFER_STALLED) cbi_command_block_reset(dev, ifnum);
 #endif
         return st;
     }
@@ -394,28 +381,33 @@ static UINT cbi_exec_in(UX_DEVICE *dev, UINT ifnum,
     return UX_SUCCESS;
 }
 
-/* TUR loop: use ADSC once per iteration and poll INT status for a short time. */
-static UINT wait_ready_tur(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_int)
+static void wait_ready_tur_best_effort(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_int)
 {
     UCHAR ufi[12];
-    ufi_from_cdb6(ufi, 0x00, 0,0,0,0,0); /* TEST UNIT READY */
+    ufi_from_cdb6(ufi, 0x00, 0,0,0,0,0);
 
-    for (UINT i = 0; i < (MSC_TEST_TUR_TOTAL_MS / 500u); i++) {
+    const ULONG sleep_ticks = ms_to_ticks(500);
+    ULONG remaining = MSC_TEST_TUR_TOTAL_MS;
+
+    while (remaining > 0) {
         UCHAR cmdblk[12];
         memcpy(cmdblk, ufi, 12);
 
         UINT st = cbi_adsc(dev, ifnum, cmdblk);
         if (st == UX_SUCCESS) {
-            UCHAR st2[2];
-            st = poll_int_status(dev, ifnum, ep_int, st2, 500u);
-            if (st == UX_SUCCESS) {
+            UCHAR st2[2] = {0,0};
+            if (poll_int_status(dev, ifnum, ep_int, st2, 500u) == UX_SUCCESS) {
                 printf("[msc_test] TUR: ready\r\n");
-                return UX_SUCCESS;
+                return;
             }
         }
-        tx_thread_sleep(ms_to_ticks(500));
+
+        tx_thread_sleep(sleep_ticks);
+        if (remaining > 500u) remaining -= 500u;
+        else remaining = 0;
     }
-    return UX_ERROR;
+
+    printf("[msc_test] TUR: give up (continuing)\r\n");
 }
 
 /* ------------------- Main test ------------------- */
@@ -447,8 +439,7 @@ void msc_test(void)
 
     const UINT ifnum = 0;
 
-    /* Try to wait for ready (best-effort). */
-    (void)wait_ready_tur(dev, ifnum, ep_int);
+    wait_ready_tur_best_effort(dev, ifnum, ep_int);
 
     /* REQUEST SENSE (18) */
     UCHAR rs[18]; memset(rs, 0, sizeof(rs));
