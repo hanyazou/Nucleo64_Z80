@@ -13,8 +13,10 @@
  * USB FDD (TEAC) = Mass Storage / UFI / CBI (Control/Bulk/Interrupt)
  *
  * - No USBX Host Storage class / no FileX.
- * - Implement CBI transport directly:
- *     ADSC(Control EP0) -> Bulk data -> Interrupt status(2 bytes)
+ * - CBI transport:
+ *     ADSC (Control EP0, 12-byte UFI cmd block)
+ *     DATA phase via Bulk (optional)
+ *     STATUS via Interrupt IN (2 bytes) (optional in practice: some devices delay/NAK a lot)
  *
  * Endpoints (from capture):
  *   Bulk OUT : 0x01
@@ -24,17 +26,17 @@
  * ThreadX:
  *   TX_TIMER_TICKS_PER_SECOND = 100 -> 1 tick = 10ms
  *
- * IMPORTANT behavioral change vs v3:
- * - Do NOT spam Command Block Reset on every Bulk/INT failure.
- *   For FDD, frequent resets can prevent spin-up.
- * - Only do Reset+ClearHalt when we see STALL.
- * - For other failures, wait a bit and retry (device may be spinning up / not ready yet).
+ * Key behavior (fix vs v4):
+ * - Do NOT resend ADSC every time Bulk/INT "fails fast".
+ *   For slow devices (spin-up/seek), Bulk IN / INT IN may return quickly with a
+ *   non-success completion code. We treat that as "not ready yet" and poll again.
+ * - Poll DATA and STATUS until success or overall timeout.
+ * - Only do Command Block Reset + ClearHalt when we see STALL.
  */
 
 /* ------------------- Tuning ------------------- */
 
 #ifndef MSC_TEST_TIMEOUT_MS
-/* FDD can be slow (spin-up/seek). */
 #define MSC_TEST_TIMEOUT_MS   (30000u)
 #endif
 
@@ -42,24 +44,16 @@
 #define MSC_TEST_READ_BLOCK_SIZE 512u
 #endif
 
-/* Retry counts */
-#ifndef MSC_TEST_DATA_RETRIES
-#define MSC_TEST_DATA_RETRIES  10u
+#ifndef MSC_TEST_POLL_SLEEP_MS
+#define MSC_TEST_POLL_SLEEP_MS  50u   /* 50ms between polls */
 #endif
 
-#ifndef MSC_TEST_TUR_RETRIES
-#define MSC_TEST_TUR_RETRIES   20u
+#ifndef MSC_TEST_TUR_TOTAL_MS
+#define MSC_TEST_TUR_TOTAL_MS   10000u /* up to 10s waiting for ready */
 #endif
 
-/* Sleep between retries */
-#ifndef MSC_TEST_RETRY_SLEEP_MS
-#define MSC_TEST_RETRY_SLEEP_MS  250u
-#endif
-
-/* Convert ms -> ThreadX ticks (ceil) */
 static ULONG ms_to_ticks(ULONG ms)
 {
-    /* ticks = ceil(ms * ticks_per_sec / 1000) */
     const ULONG tps = (ULONG)TX_TIMER_TICKS_PER_SECOND;
     return (ms * tps + 999u) / 1000u;
 }
@@ -87,7 +81,6 @@ void msc_test_notify(void *dev)
 void msc_test_wait(void)
 {
     if (!g_sem_inited) {
-        /* If init wasn't called, do a conservative polling wait. */
         while (g_dev == UX_NULL) tx_thread_sleep(1);
         return;
     }
@@ -97,7 +90,6 @@ void msc_test_wait(void)
 void msc_test_thread_entry(ULONG argument)
 {
     (void)argument;
-
     for (;;) {
         msc_test_wait();
         msc_test();
@@ -202,11 +194,10 @@ static UINT get_cbi_eps(UX_INTERFACE *itf, UX_ENDPOINT **ep_out, UX_ENDPOINT **e
 
 /* ------------------- Transfers ------------------- */
 
-static UINT endpoint_xfer(UX_ENDPOINT *ep, UCHAR *buf, ULONG len, ULONG timeout_ms, const char *tag)
+static UINT endpoint_xfer_once(UX_ENDPOINT *ep, UCHAR *buf, ULONG len, ULONG timeout_ms, const char *tag)
 {
     UX_TRANSFER *t = &ep->ux_endpoint_transfer_request;
 
-    /* Clear setup-related fields for non-control endpoints. */
     t->ux_transfer_request_type = 0;
     t->ux_transfer_request_function = 0;
     t->ux_transfer_request_value = 0;
@@ -234,12 +225,9 @@ static UINT clear_halt(UX_DEVICE *dev, UCHAR ep_addr)
 
     t->ux_transfer_request_endpoint = ep0;
 
-    /* 0x02 = Host->Dev | Standard | Endpoint */
-    t->ux_transfer_request_type = 0x02;
-    /* CLEAR_FEATURE = 0x01 */
-    t->ux_transfer_request_function = 0x01;
-    /* ENDPOINT_HALT = 0 */
-    t->ux_transfer_request_value = 0x0000;
+    t->ux_transfer_request_type = 0x02;      /* Host->Dev | Standard | Endpoint */
+    t->ux_transfer_request_function = 0x01;  /* CLEAR_FEATURE */
+    t->ux_transfer_request_value = 0x0000;   /* ENDPOINT_HALT */
     t->ux_transfer_request_index = ep_addr;
 
     t->ux_transfer_request_data_pointer = UX_NULL;
@@ -260,10 +248,8 @@ static UINT cbi_adsc(UX_DEVICE *dev, UINT ifnum, UCHAR cmdblk[12])
 
     t->ux_transfer_request_endpoint = ep0;
 
-    /* 0x21 = Host->Dev | Class | Interface */
-    t->ux_transfer_request_type = 0x21;
-    /* ADSC = 0x00 */
-    t->ux_transfer_request_function = 0x00;
+    t->ux_transfer_request_type = 0x21;      /* Host->Dev | Class | Interface */
+    t->ux_transfer_request_function = 0x00;  /* ADSC */
     t->ux_transfer_request_value = 0;
     t->ux_transfer_request_index = ifnum;
 
@@ -280,13 +266,6 @@ static UINT cbi_adsc(UX_DEVICE *dev, UINT ifnum, UCHAR cmdblk[12])
     return t->ux_transfer_request_completion_code;
 }
 
-static UINT cbi_int_status(UX_ENDPOINT *ep_int, UCHAR st2[2])
-{
-    memset(st2, 0, 2);
-    return endpoint_xfer(ep_int, st2, 2, MSC_TEST_TIMEOUT_MS, "INT-IN status");
-}
-
-/* Build UFI 12-byte command block from CDB6/CDB10 */
 static void ufi_from_cdb6(UCHAR out12[12], UCHAR op, UCHAR b1, UCHAR b2, UCHAR b3, UCHAR b4, UCHAR b5)
 {
     memset(out12, 0, 12);
@@ -314,86 +293,125 @@ static void cbi_command_block_reset(UX_DEVICE *dev, UINT ifnum)
     (void)clear_halt(dev, 0x82);
 }
 
-static UINT cbi_exec(UX_DEVICE *dev, UINT ifnum,
-                     UX_ENDPOINT *ep_out, UX_ENDPOINT *ep_in, UX_ENDPOINT *ep_int,
-                     const UCHAR cmdblk_in[12],
-                     UCHAR *data, ULONG data_len, int data_in,
-                     UINT retries)
+/* Poll Bulk IN until we receive some data or we reach overall_timeout_ms. */
+static UINT poll_bulk_in(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_in,
+                         UCHAR *buf, ULONG len, ULONG overall_timeout_ms)
 {
-    const ULONG sleep_ticks = ms_to_ticks(MSC_TEST_RETRY_SLEEP_MS);
+    const ULONG sleep_ticks = ms_to_ticks(MSC_TEST_POLL_SLEEP_MS);
+    ULONG remaining = overall_timeout_ms;
 
-    for (UINT attempt = 0; attempt < retries; attempt++) {
+    while (remaining > 0) {
+        UINT st = endpoint_xfer_once(ep_in, buf, len, MSC_TEST_TIMEOUT_MS, "Bulk IN");
+        if (st == UX_SUCCESS) {
+            return UX_SUCCESS;
+        }
 
-        UCHAR cmdblk[12];
-        memcpy(cmdblk, cmdblk_in, 12);
-
-        UINT st = cbi_adsc(dev, ifnum, cmdblk);
-        if (st != UX_SUCCESS) {
 #ifdef UX_TRANSFER_STALLED
-            if (st == UX_TRANSFER_STALLED) {
-                cbi_command_block_reset(dev, ifnum);
-            } else
+        if (st == UX_TRANSFER_STALLED) {
+            cbi_command_block_reset(dev, ifnum);
+            return st;
+        }
 #endif
-            {
-                tx_thread_sleep(sleep_ticks);
-            }
-            continue;
-        }
 
-        if (data && data_len) {
-            st = data_in ?
-                 endpoint_xfer(ep_in, data, data_len, MSC_TEST_TIMEOUT_MS, "Bulk IN") :
-                 endpoint_xfer(ep_out, data, data_len, MSC_TEST_TIMEOUT_MS, "Bulk OUT");
-            if (st != UX_SUCCESS) {
-#ifdef UX_TRANSFER_STALLED
-                if (st == UX_TRANSFER_STALLED) {
-                    cbi_command_block_reset(dev, ifnum);
-                } else
-#endif
-                {
-                    tx_thread_sleep(sleep_ticks);
-                }
-                continue;
-            }
+        tx_thread_sleep(sleep_ticks);
+        if (remaining > MSC_TEST_POLL_SLEEP_MS) {
+            remaining -= MSC_TEST_POLL_SLEEP_MS;
+        } else {
+            remaining = 0;
         }
-
-        UCHAR st2[2];
-        st = cbi_int_status(ep_int, st2);
-        if (st != UX_SUCCESS) {
-#ifdef UX_TRANSFER_STALLED
-            if (st == UX_TRANSFER_STALLED) {
-                cbi_command_block_reset(dev, ifnum);
-            } else
-#endif
-            {
-                tx_thread_sleep(sleep_ticks);
-            }
-            continue;
-        }
-
-        if (st2[0] != 0x00 || st2[1] != 0x00) {
-            printf("[msc_test] CBI status bytes = %02X %02X\r\n", st2[0], st2[1]);
-        }
-
-        return UX_SUCCESS;
     }
-
     return UX_ERROR;
 }
 
-/* TUR loop: give drive time to become ready (spin-up, etc.). */
-static UINT wait_ready_tur(UX_DEVICE *dev, UINT ifnum,
-                           UX_ENDPOINT *ep_out, UX_ENDPOINT *ep_in, UX_ENDPOINT *ep_int)
+/* Poll INT-IN status until success or overall_timeout_ms. */
+static UINT poll_int_status(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_int,
+                            UCHAR st2[2], ULONG overall_timeout_ms)
+{
+    const ULONG sleep_ticks = ms_to_ticks(MSC_TEST_POLL_SLEEP_MS);
+    ULONG remaining = overall_timeout_ms;
+
+    while (remaining > 0) {
+        UINT st = endpoint_xfer_once(ep_int, st2, 2, MSC_TEST_TIMEOUT_MS, "INT-IN status");
+        if (st == UX_SUCCESS) {
+            return UX_SUCCESS;
+        }
+
+#ifdef UX_TRANSFER_STALLED
+        if (st == UX_TRANSFER_STALLED) {
+            cbi_command_block_reset(dev, ifnum);
+            return st;
+        }
+#endif
+
+        tx_thread_sleep(sleep_ticks);
+        if (remaining > MSC_TEST_POLL_SLEEP_MS) {
+            remaining -= MSC_TEST_POLL_SLEEP_MS;
+        } else {
+            remaining = 0;
+        }
+    }
+    return UX_ERROR;
+}
+
+/*
+ * Execute CBI command:
+ *   - Send ADSC once.
+ *   - If data_in: poll Bulk IN until it succeeds (or overall timeout).
+ *   - Poll INT status until it succeeds (or overall timeout).
+ */
+static UINT cbi_exec_in(UX_DEVICE *dev, UINT ifnum,
+                        UX_ENDPOINT *ep_in, UX_ENDPOINT *ep_int,
+                        const UCHAR cmdblk_in[12],
+                        UCHAR *data, ULONG data_len,
+                        ULONG overall_timeout_ms)
+{
+    UCHAR cmdblk[12];
+    memcpy(cmdblk, cmdblk_in, 12);
+
+    UINT st = cbi_adsc(dev, ifnum, cmdblk);
+    if (st != UX_SUCCESS) {
+#ifdef UX_TRANSFER_STALLED
+        if (st == UX_TRANSFER_STALLED) {
+            cbi_command_block_reset(dev, ifnum);
+        }
+#endif
+        return st;
+    }
+
+    if (data && data_len) {
+        st = poll_bulk_in(dev, ifnum, ep_in, data, data_len, overall_timeout_ms);
+        if (st != UX_SUCCESS) return st;
+    }
+
+    UCHAR st2[2] = {0,0};
+    st = poll_int_status(dev, ifnum, ep_int, st2, overall_timeout_ms);
+    if (st != UX_SUCCESS) return st;
+
+    if (st2[0] != 0x00 || st2[1] != 0x00) {
+        printf("[msc_test] CBI status bytes = %02X %02X\r\n", st2[0], st2[1]);
+    }
+
+    return UX_SUCCESS;
+}
+
+/* TUR loop: use ADSC once per iteration and poll INT status for a short time. */
+static UINT wait_ready_tur(UX_DEVICE *dev, UINT ifnum, UX_ENDPOINT *ep_int)
 {
     UCHAR ufi[12];
     ufi_from_cdb6(ufi, 0x00, 0,0,0,0,0); /* TEST UNIT READY */
 
-    for (UINT i = 0; i < MSC_TEST_TUR_RETRIES; i++) {
-        UINT st = cbi_exec(dev, ifnum, ep_out, ep_in, ep_int, ufi,
-                           UX_NULL, 0, 1, 1);
+    for (UINT i = 0; i < (MSC_TEST_TUR_TOTAL_MS / 500u); i++) {
+        UCHAR cmdblk[12];
+        memcpy(cmdblk, ufi, 12);
+
+        UINT st = cbi_adsc(dev, ifnum, cmdblk);
         if (st == UX_SUCCESS) {
-            printf("[msc_test] TUR: ready\r\n");
-            return UX_SUCCESS;
+            UCHAR st2[2];
+            st = poll_int_status(dev, ifnum, ep_int, st2, 500u);
+            if (st == UX_SUCCESS) {
+                printf("[msc_test] TUR: ready\r\n");
+                return UX_SUCCESS;
+            }
         }
         tx_thread_sleep(ms_to_ticks(500));
     }
@@ -429,20 +447,23 @@ void msc_test(void)
 
     const UINT ifnum = 0;
 
-    (void)wait_ready_tur(dev, ifnum, ep_out, ep_in, ep_int);
+    /* Try to wait for ready (best-effort). */
+    (void)wait_ready_tur(dev, ifnum, ep_int);
 
     /* REQUEST SENSE (18) */
     UCHAR rs[18]; memset(rs, 0, sizeof(rs));
     UCHAR ufi[12];
     ufi_from_cdb6(ufi, 0x03, 0,0,0, (UCHAR)sizeof(rs), 0);
-    st = cbi_exec(dev, ifnum, ep_out, ep_in, ep_int, ufi, rs, sizeof(rs), 1, MSC_TEST_DATA_RETRIES);
+
+    st = cbi_exec_in(dev, ifnum, ep_in, ep_int, ufi, rs, sizeof(rs), 5000u);
     printf("[msc_test] REQUEST SENSE: %s(%u)\r\n", ux_status_str(st), (unsigned)st);
     if (st == UX_SUCCESS) dump_hex("REQUEST SENSE", rs, sizeof(rs));
 
     /* INQUIRY (36) */
     UCHAR inq[36]; memset(inq, 0, sizeof(inq));
     ufi_from_cdb6(ufi, 0x12, 0,0,0, (UCHAR)sizeof(inq), 0);
-    st = cbi_exec(dev, ifnum, ep_out, ep_in, ep_int, ufi, inq, sizeof(inq), 1, MSC_TEST_DATA_RETRIES);
+
+    st = cbi_exec_in(dev, ifnum, ep_in, ep_int, ufi, inq, sizeof(inq), 5000u);
     printf("[msc_test] INQUIRY: %s(%u)\r\n", ux_status_str(st), (unsigned)st);
     if (st == UX_SUCCESS) dump_hex("INQUIRY", inq, sizeof(inq));
 
@@ -452,7 +473,7 @@ void msc_test(void)
     UCHAR cdb_rd10[10] = { 0x28,0x00, 0,0,0,0, 0, 0,1, 0 };
     ufi_from_cdb10(ufi, cdb_rd10);
 
-    st = cbi_exec(dev, ifnum, ep_out, ep_in, ep_int, ufi, lba0, sizeof(lba0), 1, MSC_TEST_DATA_RETRIES);
+    st = cbi_exec_in(dev, ifnum, ep_in, ep_int, ufi, lba0, sizeof(lba0), MSC_TEST_TIMEOUT_MS);
     printf("[msc_test] READ(10) LBA0: %s(%u)\r\n", ux_status_str(st), (unsigned)st);
     if (st == UX_SUCCESS) dump_hex("LBA0", lba0, sizeof(lba0));
 
