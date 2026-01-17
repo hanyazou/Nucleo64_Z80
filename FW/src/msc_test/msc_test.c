@@ -43,6 +43,11 @@
 #define MSC_TEST_POLL_SLEEP_MS  50u
 #endif
 
+/* Auto-recover from STALL by resetting the endpoint (best-effort). */
+#ifndef MSC_TEST_AUTO_CLEAR_STALL
+#define MSC_TEST_AUTO_CLEAR_STALL 1
+#endif
+
 /* 0: skip INT-IN status phase (recommended for now) */
 #ifndef MSC_TEST_USE_INT_STATUS
 #define MSC_TEST_USE_INT_STATUS 0
@@ -94,6 +99,16 @@ void msc_test_thread_entry(ULONG argument)
 
 /* ------------------- Utilities ------------------- */
 
+// Optional API: some USBX builds don't provide ux_host_stack_endpoint_reset().
+// Provide a weak no-op stub so the app can link.
+#if defined(__GNUC__)
+__attribute__((weak)) UINT ux_host_stack_endpoint_reset(UX_ENDPOINT* endpoint)
+{
+    (void)endpoint;
+    return UX_FUNCTION_NOT_SUPPORTED;
+}
+#endif
+
 static void dump_hex(const char *title, const UCHAR *buf, ULONG len)
 {
     if (title) printf("%s (len=%lu)\r\n", title, (unsigned long)len);
@@ -103,6 +118,17 @@ static void dump_hex(const char *title, const UCHAR *buf, ULONG len)
         if ((i % 16u) == 15u) printf("\r\n");
     }
     if ((len % 16u) != 0u) printf("\r\n");
+}
+
+static void dump_ep(const char *name, UX_ENDPOINT *ep)
+{
+    const UX_ENDPOINT_DESCRIPTOR *d = &ep->ux_endpoint_descriptor;
+    printf("[msc_test] %s: addr=0x%02X attr=0x%02X maxpkt=%u interval=%u\r\n",
+           name,
+           (unsigned)d->bEndpointAddress,
+           (unsigned)d->bmAttributes,
+           (unsigned)d->wMaxPacketSize,
+           (unsigned)d->bInterval);
 }
 
 static const char *ux_status_str(UINT s)
@@ -183,7 +209,12 @@ static UINT get_cbi_eps(UX_INTERFACE *itf, UX_ENDPOINT **ep_out, UX_ENDPOINT **e
     (void)find_ep_by_addr(itf, 0x01, ep_out);
     (void)find_ep_by_addr(itf, 0x82, ep_in);
     (void)find_ep_by_addr(itf, 0x83, ep_int);
+#if MSC_TEST_USE_INT_STATUS
     return (*ep_out && *ep_in && *ep_int) ? UX_SUCCESS : UX_ERROR;
+#else
+    (void)ep_int;
+    return (*ep_out && *ep_in) ? UX_SUCCESS : UX_ERROR;
+#endif
 }
 
 /* ------------------- Transfers ------------------- */
@@ -208,6 +239,17 @@ static UINT endpoint_xfer_once(UX_ENDPOINT *ep, UCHAR *buf, ULONG len, ULONG tim
     UINT st = ux_host_stack_transfer_request(t);
     print_xfer(tag, t, st);
     if (st != UX_SUCCESS) return st;
+
+    /* Best-effort recovery when the endpoint gets stalled. */
+#if MSC_TEST_AUTO_CLEAR_STALL
+#ifdef UX_TRANSFER_STALLED
+    if (t->ux_transfer_request_completion_code == UX_TRANSFER_STALLED) {
+        printf("[msc_test] %s: endpoint stalled -> ux_host_stack_endpoint_reset()\r\n", tag);
+        (void)ux_host_stack_endpoint_reset(ep);
+    }
+#endif
+#endif
+
     return t->ux_transfer_request_completion_code;
 }
 
@@ -339,6 +381,12 @@ void msc_test(void)
         printf("[msc_test] endpoints not found\r\n");
         return;
     }
+
+    dump_ep("Bulk OUT", ep_out);
+    dump_ep("Bulk IN ", ep_in);
+#if MSC_TEST_USE_INT_STATUS
+    if (ep_int) dump_ep("Int  IN ", ep_int);
+#endif
 
     const UINT ifnum = 0;
 
