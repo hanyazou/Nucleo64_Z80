@@ -1,10 +1,9 @@
 #include "msc_test/msc_test.h"
 
-#include "app_usbx_host.h"   /* keeps consistency with your project; also provides hhcd_USB_DRD_FS */
+#include "app_usbx_host.h"
 
 #include "ux_api.h"
 #include "ux_host_stack.h"
-
 #include "tx_api.h"
 
 #include <stdio.h>
@@ -13,44 +12,40 @@
 /*
  * USB FDD (TEAC) = Mass Storage / UFI / CBI (Control/Bulk/Interrupt)
  *
- * We do NOT use USBX Host Storage class nor FileX.
- * Instead we implement the CBI transport directly using USBX host stack APIs:
- *   1) ADSC (class-specific control transfer) with a 12-byte UFI command block
- *   2) Bulk DATA phase (optional)
- *   3) Interrupt status phase (2 bytes)
+ * - No USBX Host Storage class / no FileX.
+ * - Implement CBI transport directly:
+ *     ADSC(Control EP0) -> Bulk data -> Interrupt status(2 bytes)
  *
- * Endpoints (from your capture):
+ * Your endpoints:
  *   Bulk OUT : 0x01
  *   Bulk IN  : 0x82
  *   Int  IN  : 0x83 (2 bytes)
  *
- * IMPORTANT:
- *   If CubeMX "USBX Host Class Storage (MSC)" is enabled, USBX may try to bind
- *   the storage class driver and fail because this device is CBI/UFI (not BOT).
- *   That often triggers UX_HOST_CLASS_PROTOCOL_ERROR / UX_DEVICE_ENUMERATION_FAILURE,
- *   leaving endpoints unactivated (UX_ENDPOINT_HANDLE_UNKNOWN).
- *
- *   Recommended: disable USBX host storage class in CubeMX (keep Host stack only),
- *   or comment out the storage class register in app_usbx_host.c.
- *
- * This file tries to (re-)select configuration and activate interface/endpoints
- * before issuing transfers, but it cannot recover if enumeration is aborted by
- * a class driver before endpoints exist.
+ * Notes from CBI spec:
+ * - Data-In: device may NAK Bulk IN until data is ready; host must keep polling.
+ * - Interrupt endpoint signals command completion.
+ * - Command Block Reset is SEND DIAGNOSTIC: 1Dh 04h FFh FFh FFh FFh ... then ClearFeature(HALT) on bulk pipes.
  */
-
-/* -------- Wait/Notify (ThreadX) -------- */
 
 static TX_SEMAPHORE g_msc_sem;
 static volatile UINT g_sem_inited = 0;
-
-/* Last device pointer notified from ux_host_event_callback(). */
 static UX_DEVICE * volatile g_dev = UX_NULL;
+
+#ifndef MSC_TEST_TIMEOUT_MS
+#define MSC_TEST_TIMEOUT_MS   (30000u)
+#endif
+
+#ifndef MSC_TEST_RETRIES
+#define MSC_TEST_RETRIES      (3u)
+#endif
+
+#ifndef MSC_TEST_READ_BLOCK_SIZE
+#define MSC_TEST_READ_BLOCK_SIZE 512u
+#endif
 
 void msc_test_rtos_init(void)
 {
-    if (g_sem_inited) {
-        return;
-    }
+    if (g_sem_inited) return;
     if (tx_semaphore_create(&g_msc_sem, (CHAR *)"msc_test_sem", 0) == TX_SUCCESS) {
         g_sem_inited = 1;
     }
@@ -59,41 +54,27 @@ void msc_test_rtos_init(void)
 void msc_test_notify(void *dev)
 {
     g_dev = (UX_DEVICE *)dev;
-    if (g_sem_inited) {
-        (void)tx_semaphore_put(&g_msc_sem);
-    }
+    if (g_sem_inited) (void)tx_semaphore_put(&g_msc_sem);
 }
 
 void msc_test_wait(void)
 {
     if (!g_sem_inited) {
-        while (g_dev == UX_NULL) {
-            tx_thread_sleep(1);
-        }
+        while (g_dev == UX_NULL) tx_thread_sleep(1);
         return;
     }
     (void)tx_semaphore_get(&g_msc_sem, TX_WAIT_FOREVER);
 }
 
-/* -------- Utilities -------- */
-
 static void dump_hex(const char *title, const UCHAR *buf, ULONG len)
 {
-    if (title) {
-        printf("%s (len=%lu)\r\n", title, (unsigned long)len);
-    }
+    if (title) printf("%s (len=%lu)\r\n", title, (unsigned long)len);
     for (ULONG i = 0; i < len; i++) {
-        if ((i % 16u) == 0u) {
-            printf("%08lu: ", (unsigned long)i);
-        }
+        if ((i % 16u) == 0u) printf("%08lu: ", (unsigned long)i);
         printf("%02X ", (unsigned)buf[i]);
-        if ((i % 16u) == 15u) {
-            printf("\r\n");
-        }
+        if ((i % 16u) == 15u) printf("\r\n");
     }
-    if ((len % 16u) != 0u) {
-        printf("\r\n");
-    }
+    if ((len % 16u) != 0u) printf("\r\n");
 }
 
 static const char *ux_status_str(UINT s)
@@ -101,8 +82,12 @@ static const char *ux_status_str(UINT s)
     switch (s) {
     case UX_SUCCESS: return "UX_SUCCESS";
     case UX_ERROR: return "UX_ERROR";
-    case UX_NO_CLASS_MATCH: return "UX_NO_CLASS_MATCH";
-    case UX_HOST_CLASS_INSTANCE_UNKNOWN: return "UX_HOST_CLASS_INSTANCE_UNKNOWN";
+#ifdef UX_TRANSFER_STALLED
+    case UX_TRANSFER_STALLED: return "UX_TRANSFER_STALLED";
+#endif
+#ifdef UX_TRANSFER_TIMEOUT
+    case UX_TRANSFER_TIMEOUT: return "UX_TRANSFER_TIMEOUT";
+#endif
 #ifdef UX_ENDPOINT_HANDLE_UNKNOWN
     case UX_ENDPOINT_HANDLE_UNKNOWN: return "UX_ENDPOINT_HANDLE_UNKNOWN";
 #endif
@@ -110,7 +95,7 @@ static const char *ux_status_str(UINT s)
     }
 }
 
-static void print_xfer_result(const char *tag, UX_TRANSFER *t, UINT call_status)
+static void print_xfer(const char *tag, UX_TRANSFER *t, UINT call_status)
 {
     printf("[msc_test] %s: call=%s(%u) cc=%s(%u) actual=%lu req=%lu\r\n",
            tag,
@@ -121,8 +106,6 @@ static void print_xfer_result(const char *tag, UX_TRANSFER *t, UINT call_status)
            (unsigned long)t->ux_transfer_request_requested_length);
 }
 
-/* -------- Endpoint discovery / activation -------- */
-
 static UINT activate_config_and_interface(UX_DEVICE *dev,
                                          UX_CONFIGURATION **out_cfg,
                                          UX_INTERFACE **out_itf)
@@ -132,31 +115,19 @@ static UINT activate_config_and_interface(UX_DEVICE *dev,
 
     UX_CONFIGURATION *cfg = UX_NULL;
     UINT st = ux_host_stack_device_configuration_get(dev, 0, &cfg);
-    if (st != UX_SUCCESS || cfg == UX_NULL) {
-        return st;
-    }
+    if (st != UX_SUCCESS || cfg == UX_NULL) return st;
 
-    /* Select configuration (sends SET_CONFIGURATION). */
     st = ux_host_stack_device_configuration_select(cfg);
-    if (st != UX_SUCCESS) {
-        return st;
-    }
+    if (st != UX_SUCCESS) return st;
 
-    /* Some ports require explicit activation; safe to call. */
     (void)ux_host_stack_device_configuration_activate(cfg);
 
-    /* Interface #0, alternate #0. */
     UX_INTERFACE *itf = UX_NULL;
     st = ux_host_stack_configuration_interface_get(cfg, 0, 0, &itf);
-    if (st != UX_SUCCESS || itf == UX_NULL) {
-        return st;
-    }
+    if (st != UX_SUCCESS || itf == UX_NULL) return st;
 
-    /* Select interface setting (activates endpoints for that alternate). */
     st = ux_host_stack_interface_setting_select(itf);
-    if (st != UX_SUCCESS) {
-        return st;
-    }
+    if (st != UX_SUCCESS) return st;
 
     *out_cfg = cfg;
     *out_itf = itf;
@@ -166,150 +137,113 @@ static UINT activate_config_and_interface(UX_DEVICE *dev,
 static UINT find_ep_by_addr(UX_INTERFACE *itf, UCHAR addr, UX_ENDPOINT **out_ep)
 {
     *out_ep = UX_NULL;
-
     for (UINT i = 0; i < 8; i++) {
         UX_ENDPOINT *ep = UX_NULL;
         UINT st = ux_host_stack_interface_endpoint_get(itf, i, &ep);
-        if (st != UX_SUCCESS || ep == UX_NULL) {
-            break;
-        }
+        if (st != UX_SUCCESS || ep == UX_NULL) break;
         if (ep->ux_endpoint_descriptor.bEndpointAddress == addr) {
             *out_ep = ep;
             return UX_SUCCESS;
         }
     }
-
     return UX_ERROR;
 }
 
-static UINT get_cbi_endpoints(UX_INTERFACE *itf,
-                             UX_ENDPOINT **out_bulk_out,
-                             UX_ENDPOINT **out_bulk_in,
-                             UX_ENDPOINT **out_int_in)
+static UINT get_cbi_eps(UX_INTERFACE *itf, UX_ENDPOINT **ep_out, UX_ENDPOINT **ep_in, UX_ENDPOINT **ep_int)
 {
-    *out_bulk_out = UX_NULL;
-    *out_bulk_in = UX_NULL;
-    *out_int_in = UX_NULL;
-
-    (void)find_ep_by_addr(itf, 0x01, out_bulk_out);
-    (void)find_ep_by_addr(itf, 0x82, out_bulk_in);
-    (void)find_ep_by_addr(itf, 0x83, out_int_in);
-
-    if (*out_bulk_out && *out_bulk_in && *out_int_in) {
-        return UX_SUCCESS;
-    }
-    return UX_ERROR;
+    *ep_out = *ep_in = *ep_int = UX_NULL;
+    (void)find_ep_by_addr(itf, 0x01, ep_out);
+    (void)find_ep_by_addr(itf, 0x82, ep_in);
+    (void)find_ep_by_addr(itf, 0x83, ep_int);
+    return (*ep_out && *ep_in && *ep_int) ? UX_SUCCESS : UX_ERROR;
 }
-
-/* -------- Transfers -------- */
 
 static UINT endpoint_xfer(UX_ENDPOINT *ep, UCHAR *buf, ULONG len, ULONG timeout_ms, const char *tag)
 {
-    if (ep == UX_NULL) {
-        return UX_ERROR;
-    }
-
     UX_TRANSFER *t = &ep->ux_endpoint_transfer_request;
+
+    /* Clear setup-related fields for non-control. */
+    t->ux_transfer_request_type = 0;
+    t->ux_transfer_request_function = 0;
+    t->ux_transfer_request_value = 0;
+    t->ux_transfer_request_index = 0;
+
     t->ux_transfer_request_endpoint = ep;
     t->ux_transfer_request_data_pointer = buf;
     t->ux_transfer_request_requested_length = len;
     t->ux_transfer_request_timeout_value = timeout_ms;
 
-    UINT st = ux_host_stack_transfer_request(t);
-    print_xfer_result(tag, t, st);
+    t->ux_transfer_request_maximum_length = len;
+    t->ux_transfer_request_packet_length  = ep->ux_endpoint_descriptor.wMaxPacketSize;
 
-    if (st != UX_SUCCESS) {
-        return st;
-    }
+    UINT st = ux_host_stack_transfer_request(t);
+    print_xfer(tag, t, st);
+    if (st != UX_SUCCESS) return st;
     return t->ux_transfer_request_completion_code;
 }
 
-static UINT cbi_adsc(UX_DEVICE *dev, UINT interface_number,
-                     UCHAR cmdblk[12], ULONG timeout_ms)
+static UINT clear_halt(UX_DEVICE *dev, UCHAR ep_addr)
 {
     UX_ENDPOINT *ep0 = &dev->ux_device_control_endpoint;
     UX_TRANSFER *t = &ep0->ux_endpoint_transfer_request;
 
     t->ux_transfer_request_endpoint = ep0;
 
-    /* bmRequestType: 0x21 = Host-to-Device | Class | Interface */
-    t->ux_transfer_request_type = 0x21;
-    /* bRequest: 0x00 = ADSC */
-    t->ux_transfer_request_function = 0x00;
-    t->ux_transfer_request_value = 0;
-    t->ux_transfer_request_index = interface_number;
+    /* 0x02 = Host->Dev | Standard | Endpoint */
+    t->ux_transfer_request_type = 0x02;
+    /* CLEAR_FEATURE = 0x01 */
+    t->ux_transfer_request_function = 0x01;
+    /* ENDPOINT_HALT = 0 */
+    t->ux_transfer_request_value = 0x0000;
+    t->ux_transfer_request_index = ep_addr;
 
-    t->ux_transfer_request_data_pointer = cmdblk;
-    t->ux_transfer_request_requested_length = 12;
-    t->ux_transfer_request_timeout_value = timeout_ms;
+    t->ux_transfer_request_data_pointer = UX_NULL;
+    t->ux_transfer_request_requested_length = 0;
+    t->ux_transfer_request_timeout_value = MSC_TEST_TIMEOUT_MS;
 
     UINT st = ux_host_stack_transfer_request(t);
-    print_xfer_result("ADSC(EP0)", t, st);
-
-    if (st != UX_SUCCESS) {
-        return st;
-    }
+    print_xfer("CLEAR_FEATURE(HALT)", t, st);
+    if (st != UX_SUCCESS) return st;
     return t->ux_transfer_request_completion_code;
 }
 
-static UINT cbi_status(UX_ENDPOINT *ep_int_in, UCHAR status2[2], ULONG timeout_ms)
+static UINT cbi_adsc(UX_DEVICE *dev, UINT ifnum, UCHAR cmdblk[12])
 {
-    memset(status2, 0, 2);
-    return endpoint_xfer(ep_int_in, status2, 2, timeout_ms, "INT-IN status");
+    UX_ENDPOINT *ep0 = &dev->ux_device_control_endpoint;
+    UX_TRANSFER *t = &ep0->ux_endpoint_transfer_request;
+
+    t->ux_transfer_request_endpoint = ep0;
+
+    /* 0x21 = Host->Dev | Class | Interface */
+    t->ux_transfer_request_type = 0x21;
+    /* ADSC = 0x00 */
+    t->ux_transfer_request_function = 0x00;
+    t->ux_transfer_request_value = 0;
+    t->ux_transfer_request_index = ifnum;
+
+    t->ux_transfer_request_data_pointer = cmdblk;
+    t->ux_transfer_request_requested_length = 12;
+    t->ux_transfer_request_timeout_value = MSC_TEST_TIMEOUT_MS;
+
+    t->ux_transfer_request_maximum_length = 12;
+    t->ux_transfer_request_packet_length  = ep0->ux_endpoint_descriptor.wMaxPacketSize;
+
+    UINT st = ux_host_stack_transfer_request(t);
+    print_xfer("ADSC(EP0)", t, st);
+    if (st != UX_SUCCESS) return st;
+    return t->ux_transfer_request_completion_code;
 }
 
-static UINT cbi_cmd(UX_DEVICE *dev,
-                    UINT interface_number,
-                    UX_ENDPOINT *ep_bulk_out,
-                    UX_ENDPOINT *ep_bulk_in,
-                    UX_ENDPOINT *ep_int_in,
-                    const UCHAR cmdblk_in[12],
-                    UCHAR *data,
-                    ULONG data_len,
-                    int data_in)
+static UINT cbi_int_status(UX_ENDPOINT *ep_int, UCHAR st2[2])
 {
-    UCHAR cmdblk[12];
-    memcpy(cmdblk, cmdblk_in, 12);
-
-    UINT st = cbi_adsc(dev, interface_number, cmdblk, 5000);
-    if (st != UX_SUCCESS) {
-        return st;
-    }
-
-    if (data_len != 0 && data != UX_NULL) {
-        if (data_in) {
-            st = endpoint_xfer(ep_bulk_in, data, data_len, 5000, "Bulk IN");
-        } else {
-            st = endpoint_xfer(ep_bulk_out, data, data_len, 5000, "Bulk OUT");
-        }
-        if (st != UX_SUCCESS) {
-            return st;
-        }
-    }
-
-    UCHAR st2[2];
-    st = cbi_status(ep_int_in, st2, 5000);
-    if (st != UX_SUCCESS) {
-        return st;
-    }
-
-    if (st2[0] != 0x00 || st2[1] != 0x00) {
-        printf("[msc_test] CBI status bytes = %02X %02X\r\n", st2[0], st2[1]);
-    }
-
-    return UX_SUCCESS;
+    memset(st2, 0, 2);
+    return endpoint_xfer(ep_int, st2, 2, MSC_TEST_TIMEOUT_MS, "INT-IN status");
 }
 
-static void ufi_from_cdb6(UCHAR out12[12],
-                          UCHAR op, UCHAR b1, UCHAR b2, UCHAR b3, UCHAR b4, UCHAR b5)
+static void ufi_from_cdb6(UCHAR out12[12], UCHAR op, UCHAR b1, UCHAR b2, UCHAR b3, UCHAR b4, UCHAR b5)
 {
     memset(out12, 0, 12);
-    out12[0] = op;
-    out12[1] = b1;
-    out12[2] = b2;
-    out12[3] = b3;
-    out12[4] = b4;
-    out12[5] = b5;
+    out12[0] = op; out12[1] = b1; out12[2] = b2; out12[3] = b3; out12[4] = b4; out12[5] = b5;
 }
 
 static void ufi_from_cdb10(UCHAR out12[12], const UCHAR cdb10[10])
@@ -318,11 +252,64 @@ static void ufi_from_cdb10(UCHAR out12[12], const UCHAR cdb10[10])
     memcpy(out12, cdb10, 10);
 }
 
-/* -------- Main test -------- */
+static UINT cbi_command_block_reset(UX_DEVICE *dev, UINT ifnum)
+{
+    UCHAR ufi[12];
+    memset(ufi, 0xFF, sizeof(ufi));
+    ufi[0] = 0x1D;
+    ufi[1] = 0x04;
 
-#ifndef MSC_TEST_READ_BLOCK_SIZE
-#define MSC_TEST_READ_BLOCK_SIZE 512u
-#endif
+    printf("[msc_test] >>> Command Block Reset\r\n");
+    (void)cbi_adsc(dev, ifnum, ufi);
+
+    (void)clear_halt(dev, 0x01);
+    (void)clear_halt(dev, 0x82);
+
+    return UX_SUCCESS;
+}
+
+static UINT cbi_exec(UX_DEVICE *dev, UINT ifnum,
+                     UX_ENDPOINT *ep_out, UX_ENDPOINT *ep_in, UX_ENDPOINT *ep_int,
+                     const UCHAR cmdblk_in[12],
+                     UCHAR *data, ULONG data_len, int data_in)
+{
+    for (UINT attempt = 0; attempt < MSC_TEST_RETRIES; attempt++) {
+
+        UCHAR cmdblk[12];
+        memcpy(cmdblk, cmdblk_in, 12);
+
+        UINT st = cbi_adsc(dev, ifnum, cmdblk);
+        if (st != UX_SUCCESS) {
+            cbi_command_block_reset(dev, ifnum);
+            continue;
+        }
+
+        if (data && data_len) {
+            st = data_in ?
+                 endpoint_xfer(ep_in, data, data_len, MSC_TEST_TIMEOUT_MS, "Bulk IN") :
+                 endpoint_xfer(ep_out, data, data_len, MSC_TEST_TIMEOUT_MS, "Bulk OUT");
+            if (st != UX_SUCCESS) {
+                cbi_command_block_reset(dev, ifnum);
+                continue;
+            }
+        }
+
+        UCHAR st2[2];
+        st = cbi_int_status(ep_int, st2);
+        if (st != UX_SUCCESS) {
+            cbi_command_block_reset(dev, ifnum);
+            continue;
+        }
+
+        if (st2[0] != 0x00 || st2[1] != 0x00) {
+            printf("[msc_test] CBI status bytes = %02X %02X\r\n", st2[0], st2[1]);
+        }
+
+        return UX_SUCCESS;
+    }
+
+    return UX_ERROR;
+}
 
 void msc_test(void)
 {
@@ -336,63 +323,45 @@ void msc_test(void)
 
     UX_CONFIGURATION *cfg = UX_NULL;
     UX_INTERFACE *itf = UX_NULL;
-
     UINT st = activate_config_and_interface(dev, &cfg, &itf);
     if (st != UX_SUCCESS) {
-        printf("[msc_test] activate_config_and_interface failed: %s (%u)\r\n",
+        printf("[msc_test] activate_config_and_interface failed: %s(%u)\r\n",
                ux_status_str(st), (unsigned)st);
         return;
     }
 
-    UX_ENDPOINT *ep_bulk_out = UX_NULL;
-    UX_ENDPOINT *ep_bulk_in = UX_NULL;
-    UX_ENDPOINT *ep_int_in = UX_NULL;
-
-    st = get_cbi_endpoints(itf, &ep_bulk_out, &ep_bulk_in, &ep_int_in);
-    if (st != UX_SUCCESS) {
-        printf("[msc_test] endpoint discovery failed (need 0x01/0x82/0x83)\r\n");
+    UX_ENDPOINT *ep_out = UX_NULL, *ep_in = UX_NULL, *ep_int = UX_NULL;
+    if (get_cbi_eps(itf, &ep_out, &ep_in, &ep_int) != UX_SUCCESS) {
+        printf("[msc_test] endpoints not found\r\n");
         return;
     }
 
-    const UINT interface_number = 0;
-
+    const UINT ifnum = 0;
     UCHAR ufi[12];
 
-    UCHAR rs_buf[18];
-    memset(rs_buf, 0, sizeof(rs_buf));
-    ufi_from_cdb6(ufi, 0x03, 0x00, 0x00, 0x00, (UCHAR)sizeof(rs_buf), 0x00);
-    st = cbi_cmd(dev, interface_number, ep_bulk_out, ep_bulk_in, ep_int_in,
-                 ufi, rs_buf, (ULONG)sizeof(rs_buf), 1);
-    printf("[msc_test] REQUEST SENSE: %s (%u)\r\n", ux_status_str(st), (unsigned)st);
+    UCHAR rs[18]; memset(rs, 0, sizeof(rs));
+    ufi_from_cdb6(ufi, 0x03, 0,0,0, (UCHAR)sizeof(rs), 0);
+    st = cbi_exec(dev, ifnum, ep_out, ep_in, ep_int, ufi, rs, sizeof(rs), 1);
+    printf("[msc_test] REQUEST SENSE: %s(%u)\r\n", ux_status_str(st), (unsigned)st);
+    if (st == UX_SUCCESS) dump_hex("REQUEST SENSE", rs, sizeof(rs));
 
-    UCHAR inq_buf[36];
-    memset(inq_buf, 0, sizeof(inq_buf));
-    ufi_from_cdb6(ufi, 0x12, 0x00, 0x00, 0x00, (UCHAR)sizeof(inq_buf), 0x00);
-    st = cbi_cmd(dev, interface_number, ep_bulk_out, ep_bulk_in, ep_int_in,
-                 ufi, inq_buf, (ULONG)sizeof(inq_buf), 1);
-    printf("[msc_test] INQUIRY: %s (%u)\r\n", ux_status_str(st), (unsigned)st);
+    UCHAR inq[36]; memset(inq, 0, sizeof(inq));
+    ufi_from_cdb6(ufi, 0x12, 0,0,0, (UCHAR)sizeof(inq), 0);
+    st = cbi_exec(dev, ifnum, ep_out, ep_in, ep_int, ufi, inq, sizeof(inq), 1);
+    printf("[msc_test] INQUIRY: %s(%u)\r\n", ux_status_str(st), (unsigned)st);
+    if (st == UX_SUCCESS) dump_hex("INQUIRY", inq, sizeof(inq));
 
-    ufi_from_cdb6(ufi, 0x00, 0, 0, 0, 0, 0);
-    st = cbi_cmd(dev, interface_number, ep_bulk_out, ep_bulk_in, ep_int_in,
-                 ufi, UX_NULL, 0, 1);
-    printf("[msc_test] TEST UNIT READY: %s (%u)\r\n", ux_status_str(st), (unsigned)st);
+    ufi_from_cdb6(ufi, 0x00, 0,0,0,0,0);
+    st = cbi_exec(dev, ifnum, ep_out, ep_in, ep_int, ufi, UX_NULL, 0, 1);
+    printf("[msc_test] TEST UNIT READY: %s(%u)\r\n", ux_status_str(st), (unsigned)st);
 
-    static UCHAR lba0_buf[MSC_TEST_READ_BLOCK_SIZE];
-    memset(lba0_buf, 0, sizeof(lba0_buf));
-    UCHAR cdb_rd10[10] = {
-        0x28, 0x00,
-        0x00, 0x00, 0x00, 0x00,   /* LBA = 0 */
-        0x00,
-        0x00, 0x01,               /* Transfer Length = 1 */
-        0x00
-    };
+    static UCHAR lba0[MSC_TEST_READ_BLOCK_SIZE];
+    memset(lba0, 0, sizeof(lba0));
+    UCHAR cdb_rd10[10] = { 0x28,0x00, 0,0,0,0, 0, 0,1, 0 };
     ufi_from_cdb10(ufi, cdb_rd10);
-    st = cbi_cmd(dev, interface_number, ep_bulk_out, ep_bulk_in, ep_int_in,
-                 ufi, lba0_buf, (ULONG)sizeof(lba0_buf), 1);
-    printf("[msc_test] READ(10) LBA0: %s (%u)\r\n", ux_status_str(st), (unsigned)st);
-    if (st == UX_SUCCESS) {
-        dump_hex("LBA0 dump", lba0_buf, (ULONG)sizeof(lba0_buf));
-    }
+    st = cbi_exec(dev, ifnum, ep_out, ep_in, ep_int, ufi, lba0, sizeof(lba0), 1);
+    printf("[msc_test] READ(10) LBA0: %s(%u)\r\n", ux_status_str(st), (unsigned)st);
+    if (st == UX_SUCCESS) dump_hex("LBA0", lba0, sizeof(lba0));
 
     printf("[msc_test] done\r\n");
 }
