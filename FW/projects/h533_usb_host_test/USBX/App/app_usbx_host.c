@@ -105,15 +105,6 @@ UINT MX_USBX_Host_Init(VOID *memory_ptr)
     /* USER CODE END USBX_HOST_HUB_REGISTER_ERROR */
   }
 
-  /* Initialize the host storage class */
-  if (ux_host_stack_class_register(_ux_system_host_class_storage_name,
-                                   ux_host_class_storage_entry) != UX_SUCCESS)
-  {
-    /* USER CODE BEGIN USBX_HOST_STORAGE_REGISTER_ERROR */
-    return UX_ERROR;
-    /* USER CODE END USBX_HOST_STORAGE_REGISTER_ERROR */
-  }
-
   /* Allocate the stack for host application main thread */
   if (tx_byte_allocate(byte_pool, (VOID **) &pointer, UX_HOST_APP_THREAD_STACK_SIZE,
                        TX_NO_WAIT) != TX_SUCCESS)
