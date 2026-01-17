@@ -20,7 +20,6 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "app_usbx_host.h"
-#include "ux_api.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -106,15 +105,6 @@ UINT MX_USBX_Host_Init(VOID *memory_ptr)
     /* USER CODE BEGIN USBX_HOST_HUB_REGISTER_ERROR */
     return UX_ERROR;
     /* USER CODE END USBX_HOST_HUB_REGISTER_ERROR */
-  }
-
-  /* Initialize the host storage class */
-  if (ux_host_stack_class_register(_ux_system_host_class_storage_name,
-                                   ux_host_class_storage_entry) != UX_SUCCESS)
-  {
-    /* USER CODE BEGIN USBX_HOST_STORAGE_REGISTER_ERROR */
-    return UX_ERROR;
-    /* USER CODE END USBX_HOST_STORAGE_REGISTER_ERROR */
   }
 
   /* Allocate the stack for host application main thread */
