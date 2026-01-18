@@ -99,16 +99,6 @@ void msc_test_thread_entry(ULONG argument)
 
 /* ------------------- Utilities ------------------- */
 
-// Optional API: some USBX builds don't provide ux_host_stack_endpoint_reset().
-// Provide a weak no-op stub so the app can link.
-#if defined(__GNUC__)
-__attribute__((weak)) UINT ux_host_stack_endpoint_reset(UX_ENDPOINT* endpoint)
-{
-    (void)endpoint;
-    return UX_FUNCTION_NOT_SUPPORTED;
-}
-#endif
-
 static void dump_hex(const char *title, const UCHAR *buf, ULONG len)
 {
     if (title) printf("%s (len=%lu)\r\n", title, (unsigned long)len);
@@ -136,6 +126,18 @@ static const char *ux_status_str(UINT s)
     switch (s) {
     case UX_SUCCESS: return "UX_SUCCESS";
     case UX_ERROR: return "UX_ERROR";
+#ifdef UX_STATE_EXIT
+    case UX_STATE_EXIT: return "UX_STATE_EXIT";
+#endif
+#ifdef UX_STATE_WAIT
+    case UX_STATE_WAIT: return "UX_STATE_WAIT";
+#endif
+#ifdef UX_STATE_IDLE
+    case UX_STATE_IDLE: return "UX_STATE_IDLE";
+#endif
+#ifdef UX_STATE_BUSY
+    case UX_STATE_BUSY: return "UX_STATE_BUSY";
+#endif
 #ifdef UX_TRANSFER_STALLED
     case UX_TRANSFER_STALLED: return "UX_TRANSFER_STALLED";
 #endif
@@ -156,6 +158,66 @@ static void print_xfer(const char *tag, UX_TRANSFER *t, UINT call_status)
            (unsigned long)t->ux_transfer_request_actual_length,
            (unsigned long)t->ux_transfer_request_requested_length,
            (unsigned long)t->ux_transfer_request_timeout_value);
+}
+
+/*
+ * In some USBX builds/drivers, ux_host_stack_transfer_request() returns UX_SUCCESS
+ * immediately while the transfer is still in progress, and completion_code may hold
+ * a generic state-machine code (e.g. UX_STATE_EXIT / UX_STATE_WAIT).
+ *
+ * Treat such codes as "not finished yet" and wait for the completion_code to become
+ * UX_SUCCESS or a transport error (STALL/TIMEOUT/ABORT/etc.).
+ */
+static UINT wait_transfer_complete(UX_TRANSFER *t, ULONG overall_timeout_ticks, const char *tag)
+{
+    const ULONG sleep_ticks = ms_to_ticks(MSC_TEST_POLL_SLEEP_MS);
+    const ULONG log_every_ticks = ms_to_ticks(1000u);
+    ULONG waited = 0;
+    ULONG next_log = 0;
+    UINT last_cc = 0xFFFFFFFFu;
+
+    while (waited <= overall_timeout_ticks) {
+        const UINT cc = t->ux_transfer_request_completion_code;
+
+        /* Success */
+        if (cc == UX_SUCCESS) return UX_SUCCESS;
+
+        /* Known transport errors */
+#ifdef UX_TRANSFER_STALLED
+        if (cc == UX_TRANSFER_STALLED) return cc;
+#endif
+#ifdef UX_TRANSFER_TIMEOUT
+        if (cc == UX_TRANSFER_TIMEOUT) return cc;
+#endif
+#ifdef UX_TRANSFER_ABORT
+        if (cc == UX_TRANSFER_ABORT) return cc;
+#endif
+#ifdef UX_TRANSFER_ERROR
+        if (cc == UX_TRANSFER_ERROR) return cc;
+#endif
+
+        /* Still in progress (state-machine codes): keep waiting. */
+        if (cc != last_cc || waited >= next_log) {
+            /* Log only on change or once per second to avoid distorting timing. */
+            printf("[msc_test] %s: in-flight cc=%s(%u) actual=%lu/%lu waited=%lu\r\n",
+                   tag,
+                   ux_status_str(cc), (unsigned)cc,
+                   (unsigned long)t->ux_transfer_request_actual_length,
+                   (unsigned long)t->ux_transfer_request_requested_length,
+                   (unsigned long)waited);
+            last_cc = cc;
+            next_log = waited + log_every_ticks;
+        }
+
+        tx_thread_sleep(sleep_ticks);
+        waited += sleep_ticks;
+    }
+
+#ifdef UX_TRANSFER_TIMEOUT
+    return UX_TRANSFER_TIMEOUT;
+#else
+    return UX_ERROR;
+#endif
 }
 
 /* ------------------- Stack activation / endpoint lookup ------------------- */
@@ -219,6 +281,58 @@ static UINT get_cbi_eps(UX_INTERFACE *itf, UX_ENDPOINT **ep_out, UX_ENDPOINT **e
 
 /* ------------------- Transfers ------------------- */
 
+static UINT is_state_machine_code(UINT cc)
+{
+    /*
+     * USBX error-code space:
+     *   0x0x : State machine return codes (UX_STATE_*)
+     * These may appear transiently in ux_transfer_request_completion_code
+     * while the transfer is still in progress.
+     */
+    if (cc == UX_SUCCESS) return 0;
+    if ((cc & 0xF0u) == 0x00u) return 1;
+    return 0;
+}
+
+static UINT wait_transfer_complete(UX_TRANSFER *t, ULONG timeout_ticks, const char *tag)
+{
+    /*
+     * IMPORTANT:
+     * Do NOT re-issue a transfer request when completion_code is a UX_STATE_* value.
+     * That just spams the bus/HCD and tends to produce endless UX_STATE_EXIT loops.
+     *
+     * Instead, issue the transfer once and poll completion_code until it becomes
+     * UX_SUCCESS or a real transport error (UX_TRANSFER_*), or until we time out.
+     */
+    ULONG waited = 0;
+    UINT last_cc = 0xFFFFFFFFu;
+    const ULONG sleep_ticks = 1; /* 1 tick = 10ms (your config) */
+
+    while (waited < timeout_ticks) {
+        UINT cc = t->ux_transfer_request_completion_code;
+
+        if (!is_state_machine_code(cc)) {
+            return cc;
+        }
+
+        /* Optional: print only when state changes (reduces serial spam). */
+        if (cc != last_cc) {
+            printf("[msc_test] %s: cc=%s(%u) ...waiting\r\n", tag,
+                   ux_status_str(cc), (unsigned)cc);
+            last_cc = cc;
+        }
+
+        tx_thread_sleep(sleep_ticks);
+        waited += sleep_ticks;
+    }
+
+#ifdef UX_TRANSFER_TIMEOUT
+    return UX_TRANSFER_TIMEOUT;
+#else
+    return UX_ERROR;
+#endif
+}
+
 static UINT endpoint_xfer_once(UX_ENDPOINT *ep, UCHAR *buf, ULONG len, ULONG timeout_ms, const char *tag)
 {
     UX_TRANSFER *t = &ep->ux_endpoint_transfer_request;
@@ -239,6 +353,13 @@ static UINT endpoint_xfer_once(UX_ENDPOINT *ep, UCHAR *buf, ULONG len, ULONG tim
     UINT st = ux_host_stack_transfer_request(t);
     print_xfer(tag, t, st);
     if (st != UX_SUCCESS) return st;
+
+    /* Wait for completion_code to settle (avoid busy re-issuing transfers). */
+    UINT cc = wait_transfer_complete(t, t->ux_transfer_request_timeout_value, tag);
+    if (cc != t->ux_transfer_request_completion_code && cc != UX_SUCCESS) {
+        /* In case we returned a synthesized timeout code, reflect it in logs. */
+        t->ux_transfer_request_completion_code = cc;
+    }
 
     /* Best-effort recovery when the endpoint gets stalled. */
 #if MSC_TEST_AUTO_CLEAR_STALL
@@ -292,18 +413,11 @@ static void ufi_from_cdb10(UCHAR out12[12], const UCHAR cdb10[10])
 
 static UINT poll_bulk_in(UX_ENDPOINT *ep_in, UCHAR *buf, ULONG len, ULONG overall_timeout_ms)
 {
-    const ULONG sleep_ticks = ms_to_ticks(MSC_TEST_POLL_SLEEP_MS);
-    ULONG remaining = overall_timeout_ms;
-
-    while (remaining > 0) {
-        UINT st = endpoint_xfer_once(ep_in, buf, len, MSC_TEST_BULK_TRY_TIMEOUT_MS, "Bulk IN");
-        if (st == UX_SUCCESS) return UX_SUCCESS;
-
-        tx_thread_sleep(sleep_ticks);
-        if (remaining > MSC_TEST_POLL_SLEEP_MS) remaining -= MSC_TEST_POLL_SLEEP_MS;
-        else remaining = 0;
-    }
-    return UX_ERROR;
+    /*
+     * Issue ONE Bulk IN and wait for completion up to overall_timeout_ms.
+     * (endpoint_xfer_once() itself waits for completion_code to settle.)
+     */
+    return endpoint_xfer_once(ep_in, buf, len, overall_timeout_ms, "Bulk IN");
 }
 
 #if MSC_TEST_USE_INT_STATUS
