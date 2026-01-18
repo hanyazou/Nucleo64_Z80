@@ -8,6 +8,23 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <ctype.h>
+
+/* Optional API: some USBX builds don't provide ux_host_stack_endpoint_reset().
+ * Provide a weak no-op stub so the app can link.
+ */
+UINT ux_host_stack_endpoint_reset(UX_ENDPOINT* endpoint);
+#if defined(__GNUC__)
+__attribute__((weak)) UINT ux_host_stack_endpoint_reset(UX_ENDPOINT* endpoint)
+{
+    (void)endpoint;
+#ifdef UX_FUNCTION_NOT_SUPPORTED
+    return UX_FUNCTION_NOT_SUPPORTED;
+#else
+    return UX_ERROR;
+#endif
+}
+#endif
 
 /*
  * USB FDD (TEAC) = Mass Storage / UFI / CBI (Control/Bulk/Interrupt)
@@ -99,15 +116,42 @@ void msc_test_thread_entry(ULONG argument)
 
 /* ------------------- Utilities ------------------- */
 
-static void dump_hex(const char *title, const UCHAR *buf, ULONG len)
+static void dump_hex(const char* title, const UCHAR* data, ULONG len)
 {
-    if (title) printf("%s (len=%lu)\r\n", title, (unsigned long)len);
-    for (ULONG i = 0; i < len; i++) {
-        if ((i % 16u) == 0u) printf("%08lu: ", (unsigned long)i);
-        printf("%02X ", (unsigned)buf[i]);
-        if ((i % 16u) == 15u) printf("\r\n");
+    const ULONG kCols = 16;
+
+    if (title != NULL) {
+        printf("%s (len=%lu)\r\n", title, (unsigned long)len);
     }
-    if ((len % 16u) != 0u) printf("\r\n");
+
+    for (ULONG off = 0; off < len; off += kCols) {
+        // offset
+        printf("%08lu: ", (unsigned long)off);
+
+        // hex bytes (16 columns)
+        for (ULONG i = 0; i < kCols; ++i) {
+            ULONG idx = off + i;
+            if (idx < len) {
+                printf("%02X ", (unsigned)data[idx]);
+            } else {
+                printf("   ");
+            }
+            if (i == 7) printf(" ");  // small gap in the middle
+        }
+
+        // ascii
+        printf(" |");
+        for (ULONG i = 0; i < kCols; ++i) {
+            ULONG idx = off + i;
+            if (idx < len) {
+                unsigned char c = (unsigned char)data[idx];
+                printf("%c", isprint(c) ? (char)c : '.');
+            } else {
+                printf(" ");
+            }
+        }
+        printf("|\r\n");
+    }
 }
 
 static void dump_ep(const char *name, UX_ENDPOINT *ep)
@@ -158,66 +202,6 @@ static void print_xfer(const char *tag, UX_TRANSFER *t, UINT call_status)
            (unsigned long)t->ux_transfer_request_actual_length,
            (unsigned long)t->ux_transfer_request_requested_length,
            (unsigned long)t->ux_transfer_request_timeout_value);
-}
-
-/*
- * In some USBX builds/drivers, ux_host_stack_transfer_request() returns UX_SUCCESS
- * immediately while the transfer is still in progress, and completion_code may hold
- * a generic state-machine code (e.g. UX_STATE_EXIT / UX_STATE_WAIT).
- *
- * Treat such codes as "not finished yet" and wait for the completion_code to become
- * UX_SUCCESS or a transport error (STALL/TIMEOUT/ABORT/etc.).
- */
-static UINT wait_transfer_complete(UX_TRANSFER *t, ULONG overall_timeout_ticks, const char *tag)
-{
-    const ULONG sleep_ticks = ms_to_ticks(MSC_TEST_POLL_SLEEP_MS);
-    const ULONG log_every_ticks = ms_to_ticks(1000u);
-    ULONG waited = 0;
-    ULONG next_log = 0;
-    UINT last_cc = 0xFFFFFFFFu;
-
-    while (waited <= overall_timeout_ticks) {
-        const UINT cc = t->ux_transfer_request_completion_code;
-
-        /* Success */
-        if (cc == UX_SUCCESS) return UX_SUCCESS;
-
-        /* Known transport errors */
-#ifdef UX_TRANSFER_STALLED
-        if (cc == UX_TRANSFER_STALLED) return cc;
-#endif
-#ifdef UX_TRANSFER_TIMEOUT
-        if (cc == UX_TRANSFER_TIMEOUT) return cc;
-#endif
-#ifdef UX_TRANSFER_ABORT
-        if (cc == UX_TRANSFER_ABORT) return cc;
-#endif
-#ifdef UX_TRANSFER_ERROR
-        if (cc == UX_TRANSFER_ERROR) return cc;
-#endif
-
-        /* Still in progress (state-machine codes): keep waiting. */
-        if (cc != last_cc || waited >= next_log) {
-            /* Log only on change or once per second to avoid distorting timing. */
-            printf("[msc_test] %s: in-flight cc=%s(%u) actual=%lu/%lu waited=%lu\r\n",
-                   tag,
-                   ux_status_str(cc), (unsigned)cc,
-                   (unsigned long)t->ux_transfer_request_actual_length,
-                   (unsigned long)t->ux_transfer_request_requested_length,
-                   (unsigned long)waited);
-            last_cc = cc;
-            next_log = waited + log_every_ticks;
-        }
-
-        tx_thread_sleep(sleep_ticks);
-        waited += sleep_ticks;
-    }
-
-#ifdef UX_TRANSFER_TIMEOUT
-    return UX_TRANSFER_TIMEOUT;
-#else
-    return UX_ERROR;
-#endif
 }
 
 /* ------------------- Stack activation / endpoint lookup ------------------- */
@@ -306,7 +290,7 @@ static UINT wait_transfer_complete(UX_TRANSFER *t, ULONG timeout_ticks, const ch
      */
     ULONG waited = 0;
     UINT last_cc = 0xFFFFFFFFu;
-    const ULONG sleep_ticks = 1; /* 1 tick = 10ms (your config) */
+    const ULONG sleep_ticks = ms_to_ticks(MSC_TEST_POLL_SLEEP_MS);
 
     while (waited < timeout_ticks) {
         UINT cc = t->ux_transfer_request_completion_code;
@@ -505,6 +489,7 @@ void msc_test(void)
     const UINT ifnum = 0;
 
     /* REQUEST SENSE (18) */
+    printf("[msc_test] REQUEST SENSE: ...\r\n");
     UCHAR rs[18]; memset(rs, 0, sizeof(rs));
     UCHAR ufi[12];
     ufi_from_cdb6(ufi, 0x03, 0,0,0, (UCHAR)sizeof(rs), 0);
@@ -514,6 +499,7 @@ void msc_test(void)
     if (st == UX_SUCCESS) dump_hex("REQUEST SENSE", rs, sizeof(rs));
 
     /* INQUIRY (36) */
+    printf("[msc_test] INQUIRY: ...\r\n");
     UCHAR inq[36]; memset(inq, 0, sizeof(inq));
     ufi_from_cdb6(ufi, 0x12, 0,0,0, (UCHAR)sizeof(inq), 0);
 
@@ -522,6 +508,7 @@ void msc_test(void)
     if (st == UX_SUCCESS) dump_hex("INQUIRY", inq, sizeof(inq));
 
     /* READ(10) LBA0, 1 block */
+    printf("[msc_test] READ(10) LBA0: ...\r\n");
     static UCHAR lba0[MSC_TEST_READ_BLOCK_SIZE];
     memset(lba0, 0, sizeof(lba0));
     UCHAR cdb_rd10[10] = { 0x28,0x00, 0,0,0,0, 0, 0,1, 0 };
